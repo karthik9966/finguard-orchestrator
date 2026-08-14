@@ -9,6 +9,7 @@ __pycache__/
 # Env / secrets
 .env
 .env.local
+.env.example
 
 # Data & stores (large / generated)
 data/raw/
