@@ -22,7 +22,10 @@ dependencies = [
 dev = [
     "pytest",
     "deepeval",
-    "ragas",
+    # ragas (blueprint §8) is omitted: 0.4.3 imports
+    # langchain_community.chat_models.vertexai, removed in
+    # langchain-community 0.4.x. deepeval covers the three
+    # blueprint metrics. Revisit when upstream fixes it.
 ]
 
 [build-system]

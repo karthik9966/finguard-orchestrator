@@ -35,8 +35,9 @@ docs/          # project blueprint
 ## Getting started
 
 ```bash
-# install uv (once)
-curl -LsSf https://astral.sh/uv/install.sh | sh
+# install uv (once) — macOS
+brew install uv
+# other platforms: curl -LsSf https://astral.sh/uv/install.sh | sh
 
 uv sync
 cp .env.example .env   # then fill in keys
