@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Env / secrets
+.env
+.env.local
+
+# Data & stores (large / generated)
+data/raw/
+data/processed/
+chroma_db/
+*.sqlite3
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Claude Code local settings
+.claude/settings.local.json
