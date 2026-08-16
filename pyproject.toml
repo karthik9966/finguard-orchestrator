@@ -16,6 +16,11 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "streamlit",
+    # Phase 1 §3.2 — dataset acquisition & SWIFT log generation
+    "kagglehub",   # authenticated SAML-D pull from Kaggle
+    "httpx",       # regulatory corpus fetches
+    "pandas",      # SAML-D slicing (currently only a transitive chromadb dep)
+    "fpdf2",       # pypdf reads PDFs but cannot write them
 ]
 
 [dependency-groups]

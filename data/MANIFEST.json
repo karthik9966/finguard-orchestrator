@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "artifacts": {
+    "raw/regulations/fincen/fin-2022-alert002-russian-elites.pdf": {
+      "url": "https://www.fincen.gov/system/files/2022-03/FinCEN%20Alert%20Russian%20Elites%20High%20Value%20Assets_508%20FINAL.pdf",
+      "sha256": "d090405be6a48c770f316cae782a4300eb56510cbcb5fe5861312ff918857c2a",
+      "bytes": 513312,
+      "retrieved": "2026-08-14",
+      "licence": "US Government work (public domain)",
+      "note": "FIN-2022-Alert002 -- red flags for high-value assets held through shell companies and trusts"
+    },
+    "raw/regulations/fincen/fin-2022-alert003-fincen-bis-joint.pdf": {
+      "url": "https://www.fincen.gov/system/files/2022-06/FinCEN%20and%20Bis%20Joint%20Alert%20FINAL.pdf",
+      "sha256": "1f34b9868edc7a75c94e07dd524603aa4b3c91978fad30de092973f65bc44e2f",
+      "bytes": 928327,
+      "retrieved": "2026-08-14",
+      "licence": "US Government work (public domain)",
+      "note": "FIN-2022-Alert003 -- export control evasion; transshipment and illicit corridors"
+    },
+    "raw/regulations/fincen/fin-2023-alert002-commercial-real-estate.pdf": {
+      "url": "https://www.fincen.gov/system/files/shared/FinCEN%20Alert%20Real%20Estate%20FINAL%20508_1-25-23%20FINAL%20FINAL.pdf",
+      "sha256": "c593bf2731163d781f858b8cc4fa969f74faca570918e2d84738187d181b8b0d",
+      "bytes": 479142,
+      "retrieved": "2026-08-14",
+      "licence": "US Government work (public domain)",
+      "note": "FIN-2023-Alert002 -- sanctions evasion via commercial real estate; shell company red flags"
+    },
+    "raw/regulations/finra/finra-rule-3110.txt": {
+      "url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules/3110",
+      "sha256": "ab8ed93e6401507a377a8e8943fa7edf6ea343de478e08ac38d92ed1f37a7d13",
+      "bytes": 42735,
+      "retrieved": "2026-08-14",
+      "licence": "FINRA rulebook (HTML source; no official PDF published)",
+      "note": "FINRA Rule 3110. Supervision",
+      "extraction": "html-scrape"
+    },
+    "raw/regulations/finra/finra-rule-3310.txt": {
+      "url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules/3310",
+      "sha256": "524b1a2f37796d0e6d8c6e6abe3adfc0b038d7d0bc048f9ac2082ce337dbd7fa",
+      "bytes": 4131,
+      "retrieved": "2026-08-14",
+      "licence": "FINRA rulebook (HTML source; no official PDF published)",
+      "note": "FINRA Rule 3310. Anti-Money Laundering Compliance Program",
+      "extraction": "html-scrape"
+    },
+    "raw/regulations/finra/regulatory-notice-19-18.pdf": {
+      "url": "https://www.finra.org/sites/default/files/2019-05/Regulatory-Notice-19-18.pdf",
+      "sha256": "5386c4eb161ca774d400ab54bdd1dc42c32ad362b6978f0027d1729886196732",
+      "bytes": 141647,
+      "retrieved": "2026-08-14",
+      "licence": "FINRA public guidance",
+      "note": "Regulatory Notice 19-18 -- 104 money laundering red flags for broker-dealers"
+    },
+    "raw/regulations/obliqa/StructuredRegulatoryDocuments.zip": {
+      "url": "https://raw.githubusercontent.com/RegNLP/ObliQADataset/main/StructuredRegulatoryDocuments.zip",
+      "sha256": "7f31af52e9bfacabfbe1f73c5bbd860afd93dd2aab72f05cb0608dd39ea1205d",
+      "bytes": 1842849,
+      "retrieved": "2026-08-14",
+      "licence": "RegNLP / ObliQA (see upstream repository)",
+      "note": "ADGM regulatory corpus: 40 documents, 13,732 passages, ~876k words. DocumentID 1 is the ADGM AML Rulebook.",
+      "extracted_documents": 40
+    },
+    "raw/saml_d/SAML-D.csv": {
+      "url": "https://www.kaggle.com/datasets/berkanoztas/synthetic-transaction-monitoring-dataset-aml",
+      "sha256": "5b71ce2ea7b47fe6f19da1aa151776b04ec74560a852c2c077df91d20b8b4ef9",
+      "bytes": 996168850,
+      "retrieved": "2026-08-14",
+      "licence": "CC BY-NC-SA 4.0 (non-commercial; attribution required)",
+      "note": "SAML-D: 9,504,852 transactions, 12 features, 28 typologies (11 normal / 17 suspicious)",
+      "kaggle_slug": "berkanoztas/synthetic-transaction-monitoring-dataset-aml",
+      "kagglehub_cache": "/Users/karthik/.cache/kagglehub/datasets/berkanoztas/synthetic-transaction-monitoring-dataset-aml/versions/2/SAML-D.csv"
+    }
+  },
+  "citations": {
+    "saml_d": "B. Oztas, D. Cetinkaya, F. Adedoyin, M. Budka, H. Dogan and G. Aksu, \"Enhancing Anti-Money Laundering: Development of a Synthetic Transaction Monitoring Dataset,\" 2023 IEEE International Conference on e-Business Engineering (ICEBE), Sydney, Australia, 2023, pp. 47-54, doi:10.1109/ICEBE59045.2023.00028"
+  }
+}

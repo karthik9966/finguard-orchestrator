@@ -1,0 +1,248 @@
+{
+  "schema": 1,
+  "generated": "2026-08-14",
+  "source": "https://github.com/RegNLP/ObliQADataset (StandartizedRegulatoryDocumentsTXT)",
+  "note": "All 40 documents are Abu Dhabi Global Market (ADGM) regulatory publications.",
+  "documents": {
+    "1": {
+      "title": "AML",
+      "source_file": "AML_VER09.211223.txt",
+      "passages": 566,
+      "matched_probes": "5/5"
+    },
+    "2": {
+      "title": "CIB",
+      "source_file": "CIB_VER04.030220.txt",
+      "passages": 301,
+      "matched_probes": "5/5"
+    },
+    "3": {
+      "title": "COBS",
+      "source_file": "COBS_VER15.150823.txt",
+      "passages": 1291,
+      "matched_probes": "5/5"
+    },
+    "4": {
+      "title": "FEES",
+      "source_file": "FEES_VER16.181223.txt",
+      "passages": 169,
+      "matched_probes": "5/5"
+    },
+    "5": {
+      "title": "Fund Passporting Rules",
+      "source_file": "FP_VER01.110319.txt",
+      "passages": 116,
+      "matched_probes": "5/5"
+    },
+    "6": {
+      "title": "FUNDS",
+      "source_file": "FUNDS_VER08.040723.txt",
+      "passages": 886,
+      "matched_probes": "4/5"
+    },
+    "7": {
+      "title": "GEN",
+      "source_file": "GEN_VER08.181223.txt",
+      "passages": 767,
+      "matched_probes": "5/5"
+    },
+    "8": {
+      "title": "GLO",
+      "source_file": "GLO_VER19.181223.txt",
+      "passages": 10,
+      "matched_probes": "5/5"
+    },
+    "9": {
+      "title": "Islamic Finance Rules",
+      "source_file": "IFR_VER07.181223.txt",
+      "passages": 352,
+      "matched_probes": "5/5"
+    },
+    "10": {
+      "title": "MIR",
+      "source_file": "MIR_VER07.181223.txt",
+      "passages": 507,
+      "matched_probes": "5/5"
+    },
+    "11": {
+      "title": "MKT",
+      "source_file": "MKT_VER08.181223.txt",
+      "passages": 1094,
+      "matched_probes": "5/5"
+    },
+    "12": {
+      "title": "PIN",
+      "source_file": "PIN_VER05.181223.txt",
+      "passages": 865,
+      "matched_probes": "5/5"
+    },
+    "13": {
+      "title": "PRU",
+      "source_file": "PRU_VER13.181223.txt",
+      "passages": 2220,
+      "matched_probes": "5/5"
+    },
+    "14": {
+      "title": "BRR Regulations (December 2018)",
+      "source_file": "BRR Regulations (December 2018).txt",
+      "passages": 399,
+      "matched_probes": "5/5"
+    },
+    "15": {
+      "title": "CRS Regulations 2017 (Consolidated October 2023) v6",
+      "source_file": "CRS Regulations 2017 (Consolidated_October 2023) v6.txt",
+      "passages": 46,
+      "matched_probes": "5/5"
+    },
+    "16": {
+      "title": "Foreign Tax Account Compliance Regulations 2022",
+      "source_file": "Foreign Tax Account Compliance Regulations 2022.txt",
+      "passages": 48,
+      "matched_probes": "5/5"
+    },
+    "17": {
+      "title": "FSMR (Consolidated December 2023)",
+      "source_file": "FSMR (Consolidated_December 2023).txt",
+      "passages": 1793,
+      "matched_probes": "5/5"
+    },
+    "18": {
+      "title": "Guidance \u2013 Regulatory Framework for Fund Managers of Venture Capital Funds",
+      "source_file": "Guidance \u2013 Regulatory Framework for Fund Managers of Venture Capital Funds (VER03.181223).txt",
+      "passages": 30,
+      "matched_probes": "5/5"
+    },
+    "19": {
+      "title": "Guidance - Virtual Asset Activities in ADGM",
+      "source_file": "Guidance - Virtual Asset Activities in ADGM (VER05.181223).txt",
+      "passages": 192,
+      "matched_probes": "5/5"
+    },
+    "20": {
+      "title": "ADGM Guidance - Application of English Laws",
+      "source_file": "ADGM_Guidance_-_Application_of_English_Laws.txt",
+      "passages": 18,
+      "matched_probes": "5/5"
+    },
+    "21": {
+      "title": "API - Guidance Note Final 14 October 2019 Eng",
+      "source_file": "API - Guidance Note_Final 14 October 2019 Eng.txt",
+      "passages": 73,
+      "matched_probes": "5/5"
+    },
+    "22": {
+      "title": "Code of Market Conduct",
+      "source_file": "CMC_VER03.270922.txt",
+      "passages": 128,
+      "matched_probes": "5/5"
+    },
+    "23": {
+      "title": "Confidentiality Policy",
+      "source_file": "CONF_VER03.18042019.txt",
+      "passages": 71,
+      "matched_probes": "5/5"
+    },
+    "24": {
+      "title": "Draft Guidance - FSRA Guiding Principles for Virtual Assets Regulation and Supervision (IA)",
+      "source_file": "Draft Guidance - FSRA Guiding Principles for Virtual Assets Regulation and Supervision (IA).txt",
+      "passages": 30,
+      "matched_probes": "5/5"
+    },
+    "25": {
+      "title": "Environmental Social and Governance Disclosures Guidance",
+      "source_file": "Environmental Social and Governance Disclosures Guidance_VER01.040723.txt",
+      "passages": 16,
+      "matched_probes": "5/5"
+    },
+    "26": {
+      "title": "FinTech RegLab Guidance",
+      "source_file": "FinTech RegLab Guidance_VER01.31082016.txt",
+      "passages": 53,
+      "matched_probes": "5/5"
+    },
+    "27": {
+      "title": "Guidance and Policies Manual",
+      "source_file": "GPM VER03.120623.txt",
+      "passages": 523,
+      "matched_probes": "5/5"
+    },
+    "28": {
+      "title": "Guidance - Continuous Disclosure",
+      "source_file": "Guidance - Continuous Disclosure_VER01.280922.txt",
+      "passages": 195,
+      "matched_probes": "5/5"
+    },
+    "29": {
+      "title": "Guidance - Digital Securities Offerings and Virtual Assets under the Financial Services and Markets Regulations 240220",
+      "source_file": "Guidance - Digital Securities Offerings and Virtual  Assets under the Financial Services and Markets Regulations_240220.txt",
+      "passages": 35,
+      "matched_probes": "5/5"
+    },
+    "30": {
+      "title": "Guidance - Disclosure Requirements for Mining Reporting Entities",
+      "source_file": "Guidance - Disclosure Requirements for Mining Reporting Entities_VER01.280922.txt",
+      "passages": 142,
+      "matched_probes": "5/5"
+    },
+    "31": {
+      "title": "Guidance - Disclosure Requirements for Petroleum Reporting Entities",
+      "source_file": "Guidance - Disclosure Requirements for Petroleum Reporting Entities_VER01.280922.txt",
+      "passages": 101,
+      "matched_probes": "5/5"
+    },
+    "32": {
+      "title": "Guidance - Private Credit Funds",
+      "source_file": "Guidance - Private Credit Funds_VER01.040523.txt",
+      "passages": 15,
+      "matched_probes": "5/5"
+    },
+    "33": {
+      "title": "Guidance Regulation of Digital Securities Activities in ADGM 240224",
+      "source_file": "Guidance  Regulation of Digital Securities Activities in ADGM_240224.txt",
+      "passages": 139,
+      "matched_probes": "5/5"
+    },
+    "34": {
+      "title": "Guidance - Regulation of Spot Commodities Activities in ADGM",
+      "source_file": "Guidance - Regulation of Spot Commodities Activities in ADGM (VER02.181223).txt",
+      "passages": 115,
+      "matched_probes": "4/5"
+    },
+    "35": {
+      "title": "Guidance Regulatory Framework for PFP and Multilateral Trading Facilities dealing with Private Capital Markets",
+      "source_file": "Guidance_Regulatory Framework for PFP and Multilateral Trading Facilities dealing with Private Capital Markets (VER02.181223).txt",
+      "passages": 39,
+      "matched_probes": "5/5"
+    },
+    "36": {
+      "title": "SFWG Guidance on Principles for the Effective Management of Climate-related Financial Risks",
+      "source_file": "SFWG_Guidance on Principles for the Effective Management of Climate-related Financial Risks.txt",
+      "passages": 78,
+      "matched_probes": "5/5"
+    },
+    "37": {
+      "title": "Supplementary Guidance Authorisation of Digital Investment Management (Robo-advisory) Activities",
+      "source_file": "Supplementary Guidance  Authorisation of Digital Investment Management (Robo-advisory) Activities.txt",
+      "passages": 71,
+      "matched_probes": "5/5"
+    },
+    "38": {
+      "title": "Supplementary Guidance OTCLPs",
+      "source_file": "Supplementary Guidance OTCLPs (VER02.181223).txt",
+      "passages": 11,
+      "matched_probes": "5/5"
+    },
+    "39": {
+      "title": "Sustainable Finance Supplementary Guidance",
+      "source_file": "Sustainable Finance Supplementary Guidance_VER01.040723.txt",
+      "passages": 57,
+      "matched_probes": "5/5"
+    },
+    "40": {
+      "title": "UAE CRS Guidance Notes 17 June 2020 (002)",
+      "source_file": "UAE_CRS_Guidance_Notes_17 June 2020 (002).txt",
+      "passages": 170,
+      "matched_probes": "5/5"
+    }
+  }
+}
