@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "generated": "2026-08-14",
+  "generated": "2026-08-16",
   "source": "https://github.com/RegNLP/ObliQADataset (StandartizedRegulatoryDocumentsTXT)",
   "note": "All 40 documents are Abu Dhabi Global Market (ADGM) regulatory publications.",
   "documents": {
     "1": {
-      "title": "AML",
+      "title": "AML Rulebook",
       "source_file": "AML_VER09.211223.txt",
       "passages": 566,
       "matched_probes": "5/5"

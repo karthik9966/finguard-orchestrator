@@ -21,6 +21,9 @@ dependencies = [
     "httpx",       # regulatory corpus fetches
     "pandas",      # SAML-D slicing (currently only a transitive chromadb dep)
     "fpdf2",       # pypdf reads PDFs but cannot write them
+    # Phase 1 §3.3 — semantic chunking & retrieval benchmark
+    "numpy",         # cosine boundaries, embedding cache (transitive today; imported directly)
+    "python-dotenv", # loads .env (same — transitive via chromadb, but we import it)
 ]
 
 [dependency-groups]

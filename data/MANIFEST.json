@@ -51,6 +51,17 @@
       "licence": "FINRA public guidance",
       "note": "Regulatory Notice 19-18 -- 104 money laundering red flags for broker-dealers"
     },
+    "raw/regulations/obliqa/ObliQA_test.json": {
+      "url": "https://raw.githubusercontent.com/RegNLP/ObliQADataset/main/ObliQA_test.json",
+      "sha256": "cdca623b02f248ca736c2c2d98e9b6bebe4a82708f7984ef8f80f9fcd797e1b1",
+      "bytes": 3592296,
+      "retrieved": "2026-08-16",
+      "licence": "RegNLP / ObliQA (see upstream repository)",
+      "note": "Retrieval gold set: 2,786 questions labelled with 3,666 relevant passages. Ground truth for \u00a73.3 chunking quality.",
+      "questions": 2786,
+      "gold_pairs": 3666,
+      "unresolved_pairs": 0
+    },
     "raw/regulations/obliqa/StructuredRegulatoryDocuments.zip": {
       "url": "https://raw.githubusercontent.com/RegNLP/ObliQADataset/main/StructuredRegulatoryDocuments.zip",
       "sha256": "7f31af52e9bfacabfbe1f73c5bbd860afd93dd2aab72f05cb0608dd39ea1205d",

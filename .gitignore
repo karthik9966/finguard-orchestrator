@@ -9,7 +9,8 @@ __pycache__/
 # Env / secrets
 .env
 .env.local
-.env.example
+# .env.example is the tracked template README tells you to copy -- it holds no secrets.
+!.env.example
 
 # Data & stores (large / generated)
 data/raw/

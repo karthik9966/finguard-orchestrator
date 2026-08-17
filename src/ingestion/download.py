@@ -5,6 +5,8 @@ Two corpora, two very different roles:
 A. SAML-D (Kaggle) -- the transaction feed being *audited*. ~996 MB / 9,504,852 rows.
 B. A hybrid regulatory corpus -- the *law* audited against, which §3.4 chunks into ChromaDB:
    ObliQA (40 ADGM rulebooks), FINRA Rule 3310/3110 + Regulatory Notice 19-18, FinCEN alerts.
+   ObliQA's labelled question set comes along with it: it is the ground truth §3.3 uses to
+   measure whether a chunking strategy actually helps retrieval.
 
 Neither corpus is committed -- ``data/raw`` is gitignored. What *is* committed is
 ``data/MANIFEST.json``: source URL, sha256, size, retrieval date and licence for every
@@ -67,6 +69,13 @@ OBLIQA_DIR = RAW_DIR / "regulations" / "obliqa"
 OBLIQA_ZIP = OBLIQA_DIR / "StructuredRegulatoryDocuments.zip"
 OBLIQA_DOCS = OBLIQA_DIR / "StructuredRegulatoryDocuments"
 OBLIQA_EXPECTED_DOCS = 40
+
+# ObliQA is a *retrieval* dataset, not just a corpus: the same repository ships questions
+# already labelled with the passages that answer them. That is the only ground truth we have
+# for judging §3.3's chunking -- without it, "is this chunked well?" is unanswerable.
+OBLIQA_QA_URL = "https://raw.githubusercontent.com/RegNLP/ObliQADataset/main/ObliQA_test.json"
+OBLIQA_QA = OBLIQA_DIR / "ObliQA_test.json"
+OBLIQA_EXPECTED_QUESTIONS = 2786
 
 
 @dataclass(frozen=True)
@@ -272,6 +281,34 @@ def extract_obliqa(zip_path: Path) -> int:
     return extracted
 
 
+def verify_obliqa_qa(qa_path: Path) -> tuple[int, int, int]:
+    """Check the gold set against the documents on disk.
+
+    Returns ``(questions, gold_pairs, unresolved)``. A question is only usable for scoring
+    retrieval if its ``(DocumentID, PassageID)`` actually exists in the corpus we indexed --
+    upstream QA sets routinely drift from the document release they were built against, so
+    the dangling rate is measured rather than assumed.
+    """
+    records = json.loads(qa_path.read_text())
+    if len(records) != OBLIQA_EXPECTED_QUESTIONS:
+        raise RuntimeError(
+            f"expected {OBLIQA_EXPECTED_QUESTIONS} ObliQA questions, found {len(records)}"
+        )
+
+    known: set[tuple[int, str]] = set()
+    for doc in OBLIQA_DOCS.glob("*.json"):
+        for passage in json.loads(doc.read_text()):
+            known.add((passage["DocumentID"], passage["PassageID"]))
+
+    pairs = unresolved = 0
+    for record_ in records:
+        for passage in record_["Passages"]:
+            pairs += 1
+            if (passage["DocumentID"], passage["PassageID"]) not in known:
+                unresolved += 1
+    return len(records), pairs, unresolved
+
+
 def fetch_saml_d(manifest: dict, *, force: bool) -> bool:
     """Pull SAML-D via kagglehub.
 
@@ -349,6 +386,31 @@ def acquire(*, force: bool = False) -> int:
         else:
             print(f"  ok        {rel(OBLIQA_ZIP)} (unchanged)")
 
+        if force or not is_current(manifest, OBLIQA_QA):
+            download(client, OBLIQA_QA_URL, OBLIQA_QA)
+            questions, pairs, unresolved = verify_obliqa_qa(OBLIQA_QA)
+            record(
+                manifest,
+                OBLIQA_QA,
+                url=OBLIQA_QA_URL,
+                licence="RegNLP / ObliQA (see upstream repository)",
+                note=(
+                    f"Retrieval gold set: {questions:,} questions labelled with "
+                    f"{pairs:,} relevant passages. Ground truth for §3.3 chunking quality."
+                ),
+                questions=questions,
+                gold_pairs=pairs,
+                unresolved_pairs=unresolved,
+            )
+            print(f"  fetched   {rel(OBLIQA_QA)} ({questions:,} questions, {pairs:,} gold passages)")
+            if unresolved:
+                print(
+                    f"            {unresolved:,}/{pairs:,} gold passages "
+                    f"({unresolved / pairs:.1%}) do not resolve against the corpus on disk"
+                )
+        else:
+            print(f"  ok        {rel(OBLIQA_QA)} (unchanged)")
+
         for remote in REGULATORY_PDFS:
             if force or not is_current(manifest, remote.dest):
                 download(client, remote.url, remote.dest)
@@ -384,6 +446,7 @@ def acquire(*, force: bool = False) -> int:
     expected = {
         rel(SAML_D_CSV),
         rel(OBLIQA_ZIP),
+        rel(OBLIQA_QA),
         *(rel(remote.dest) for remote in REGULATORY_PDFS),
         *(rel(FINRA_DIR / f"finra-rule-{number}.txt") for number, _, _ in FINRA_RULES),
     }
