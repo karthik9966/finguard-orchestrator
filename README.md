@@ -115,7 +115,8 @@ the `section_clause` §3.4 needs and §6.4's citations drawer shows. Re-chunking
 degrade every citation to "somewhere in 14.2.3", so that path normalizes and filters, and only
 reaches for the cosine chunker on the 74 oversized passages. **The four PDFs and two scraped
 FINRA rules** are continuous prose with no section IDs — that is where the blueprint's
-cosine-distance rule actually applies.
+cosine-distance rule actually applies. **92.1% of chunks pass through whole** — only 7.9% are
+produced by splitting.
 
 The threshold is the p95 of *each document's own* adjacent-sentence distances, not a constant:
 a dense rulebook and a discursive advisory have different baseline similarity.
@@ -126,7 +127,7 @@ What the corpus needed before it could be embedded:
 |---|---|
 | 692 empty + 1,510 heading-only passages (16%) | dropped |
 | 1,947 passages carrying invisible chars — U+200E ×4,467, U+F0FC ×971 (a Wingdings bullet) | stripped |
-| 121 passages containing `/Table Start`; the GLO glossary is one 152,049-char passage | row-split with the header repeated |
+| 228 passages needing a split — 109 over 2,000 chars, 84 containing a table, 35 both; the GLO glossary is one 152,049-char passage | tables row-split with the header repeated, prose cosine-split |
 | 17 `(DocumentID, PassageID)` keys collide across 44 passages with *different* text | `chunk_id` carries the passage UUID |
 | FINRA 19-18 prints `May 6, 201919-18` on 6 of 12 pages | page furniture stripped |
 
@@ -138,13 +139,59 @@ ObliQA ships labelled questions, so chunking is measured rather than eyeballed:
 
 | backend | chunks | hit@1 | hit@5 | hit@15 | recall@5 | recall@15 | MRR |
 |---|---|---|---|---|---|---|---|
-| `all-MiniLM-L6-v2` | 12,273 | 45.2% | 67.7% | 79.2% | 60.9% | 71.6% | 0.552 |
-| `text-embedding-3-small` | — | pending `OPENAI_API_KEY` | | | | | |
+| **`all-MiniLM-L6-v2`** *(in use)* | 12,273 | 45.2% | 67.7% | 79.2% | 60.9% | 71.6% | 0.552 |
+| `text-embedding-3-small` | 12,273 | 51.7% | 73.0% | **82.8%** | 65.8% | 75.1% | **0.610** |
+
+OpenAI wins by +3.6 hit@15 and +0.058 MRR. Adoption is **deferred to the post-project
+optimization pass** — Phase 1 stays free, offline and credential-free, and the choice is better
+judged end-to-end once the agent can be scored on report quality rather than retrieval rank
+alone. Both chunk sets are on disk and the collection records which model built it, so switching
+is `store.py --backend openai --rebuild`, not a refactor.
+
+Worth noting the gap is almost purely embedding quality: 97.5% of chunks are byte-identical
+across the two runs, since `max_chars` fixes how many pieces an oversized passage yields while
+cosine distance only shifts where the cut lands.
+
+**Ceiling to carry forward: 17.2% of questions have no correct clause in the top 15.** §9.4's
+reranker prunes 15 → 4; it cannot add. No prompt or critic loop recovers those.
 
 > A tier 1+2 filter scores 39.2% hit@15 — but **50% of gold passages live in tier 3**, capping
 > it at 50.0%. Normalised that is 78.4% of achievable vs 79.2% unfiltered: retrieval quality is
 > unchanged. These questions cover the whole ADGM rulebook, so this gold set validates chunking
 > and embeddings but *cannot* validate the AML tier filter — that needs §8's AML scenarios.
+
+## Vector store (§3.4)
+
+```bash
+uv run python -m src.ingestion.store                      # build the `regulations` collection
+uv run python -m src.ingestion.store --stats              # counts by corpus and tier
+uv run python -m src.ingestion.store --query "transactions structured to avoid reporting thresholds"
+uv run streamlit run src/ui/ingestion_panel.py            # ingestion metrics + rule inventory
+```
+
+**One collection, 12,273 vectors, 46 documents.** Cosine space, idempotent upsert keyed on
+`chunk_id`, and every chunk carries the metadata that makes a citation checkable:
+
+```python
+{"source_file": "AML_VER09.211223.txt", "section_clause": "14.2.3.Guidance.1.",
+ "last_updated_date": "2023-12-21", "corpus": "obliqa", "document_id": 1,
+ "document_title": "AML Rulebook", "relevance_tier": 1, "jurisdiction": "ADGM"}
+```
+
+| | |
+|---|---|
+| by corpus | obliqa 12,122 · finra 65 · fincen 86 |
+| by tier | 1: 3,872 · 2: 1,796 · 3: 6,605 |
+| undated | 185 chunks, from the 4 ADGM documents that state no date |
+
+`retrieve(query, k=15, tiers=None)` is what §4's AML Audit node calls. The collection records
+which embedding model built it and **raises** if queried with another — 384-dim and 1,536-dim
+vectors describe the same text in incompatible spaces, and the failure mode to avoid is silent
+nonsense rather than an error.
+
+> Transactions are **not** embedded. Measured on 220 MT103s, laundering and clean wires separate
+> by +0.029 cosine — noise. An MT103 is ~65 tokens of which ~55 are boilerplate. Parsed wires
+> belong in a table queried with SQL.
 
 > SAML-D is licensed **CC BY-NC-SA 4.0** (non-commercial, attribution required):
 > B. Oztas, D. Cetinkaya, F. Adedoyin, M. Budka, H. Dogan and G. Aksu, "Enhancing Anti-Money
@@ -157,7 +204,7 @@ ObliQA ships labelled questions, so chunking is measured rather than eyeballed:
   - [x] §3.1 Environment setup
   - [x] §3.2 Dataset acquisition & SWIFT log generation
   - [x] §3.3 Semantic chunking (cosine distance)
-  - [ ] §3.4 ChromaDB loading & metadata
+  - [x] §3.4 ChromaDB loading & metadata
 - [ ] Phase 2 — LangGraph agent core
 - [ ] Phase 3 — Observability, evals, cost optimization
 - [ ] Phase 4 — Streamlit cockpit & Docker packaging
