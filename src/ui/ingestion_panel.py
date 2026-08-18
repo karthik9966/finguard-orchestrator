@@ -21,8 +21,23 @@ from src.ingestion.store import COLLECTION_NAME, inventory, stats
 st.set_page_config(page_title="FinGuard — Ingestion", page_icon="📚", layout="wide")
 st.title("Vector store ingestion")
 
+
+# Both helpers scan every chunk's metadata, so an uncached page load costs three full passes
+# over 12,273 records and paints in visible stages. Cache briefly -- ingestion is a rare event,
+# and the TTL still picks up a rebuild without needing a restart.
+@st.cache_data(ttl=60, show_spinner="Reading the vector store...")
+def _stats() -> dict:
+    return stats()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _inventory() -> list[dict]:
+    return inventory()
+
+
 try:
-    payload = stats()
+    payload = _stats()
+    documents = _inventory()
 except Exception as error:  # noqa: BLE001 - the empty state is the common case, show it plainly
     st.error(f"Collection {COLLECTION_NAME!r} is not available.")
     st.code("uv run python -m src.ingestion.store --backend minilm", language="bash")
@@ -32,7 +47,7 @@ except Exception as error:  # noqa: BLE001 - the empty state is the common case,
 left, middle, right, far = st.columns(4)
 left.metric("Vectors", f"{payload['vectors']:,}")
 middle.metric("Embedding model", payload["model"] or "unknown")
-right.metric("Documents", f"{len(inventory())}")
+right.metric("Documents", f"{len(documents)}")
 far.metric("Undated chunks", f"{payload['undated']:,}")
 st.caption(f"Collection `{payload['collection']}` · backend `{payload['backend']}` · built {payload['built']}")
 
@@ -54,7 +69,7 @@ st.divider()
 
 st.subheader("Vector store inventory")
 st.caption("Which rules are active, so a citation can be checked against a known corpus.")
-frame = pd.DataFrame(inventory())
+frame = pd.DataFrame(documents)
 st.dataframe(
     frame,
     use_container_width=True,
