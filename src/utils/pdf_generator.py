@@ -52,6 +52,12 @@ LABELS_PATH = DATA_DIR / "processed" / "ledger_labels.csv"
 # that no auditor would believe.
 MAX_FLAGGED_SHARE = 0.15
 
+# How many of an anchor account's ordinary wires to keep as context. Enough that the laundering
+# run sits inside real traffic rather than in isolation; few enough that one busy anchor cannot
+# become the whole batch. The rest of the log is filled with unrelated background traffic, which
+# is what a real month looks like.
+CONTEXT_PER_ANCHOR = 12
+
 USED_COLUMNS = [
     "Time",
     "Date",
@@ -454,12 +460,19 @@ def select_cases(
 
     flagged = month.loc[sorted({i for idx in selected_indices for i in idx})]
     # The collector account's legitimate traffic is what makes the run look like a pattern
-    # rather than a list of isolated transfers.
-    context = month[
-        (month.Is_laundering == 0)
-        & (month.Sender_account.isin(anchors) | month.Receiver_account.isin(anchors))
-    ]
-    return pd.concat([flagged, context]).drop_duplicates()
+    # rather than a list of isolated transfers -- but it has to be *some* of that traffic.
+    # Taking all of it lets one anchor swamp the log: an anchor whose ordinary month happens
+    # to include a 180-wire Normal_Fan_In consumed the entire context budget and produced a
+    # "monthly log" that was 85% one account receiving money on a single day. No detector can
+    # work on that, and no auditor would recognise it as a month of private banking.
+    clean = month[month.Is_laundering == 0]
+    kept: set[int] = set()
+    for anchor in sorted(anchors):
+        touching = clean[(clean.Sender_account == anchor) | (clean.Receiver_account == anchor)]
+        if len(touching) > CONTEXT_PER_ANCHOR:
+            touching = touching.sample(CONTEXT_PER_ANCHOR, random_state=rng.randrange(2**31))
+        kept.update(touching.index)
+    return pd.concat([flagged, clean.loc[sorted(kept)]]).drop_duplicates()
 
 
 def build_month(
@@ -499,6 +512,16 @@ def build_month_within_budget(
     agent. Drop clusters until the flagged share is credible; each attempt is seeded from
     the run seed so the result stays reproducible whichever attempt wins.
     """
+    if config.cases_per_month == 0:
+        # A control batch: ordinary traffic only. Without one, the router's "no candidates ->
+        # no model, $0.00" path can be unit-tested but never demonstrated on a real document,
+        # because every other batch has patterns planted in it by construction.
+        rng = random.Random(f"{config.seed}:{period}:clean")
+        clean = month[month.Is_laundering == 0]
+        if len(clean) > config.max_messages:
+            clean = clean.sample(config.max_messages, random_state=rng.randrange(2**31))
+        return clean.sort_values(["Date", "Time"]).reset_index(drop=True)
+
     for wanted in range(config.cases_per_month, 0, -1):
         rng = random.Random(f"{config.seed}:{period}:{wanted}")
         # Stride by the cluster count so consecutive months draw disjoint typologies.
@@ -523,7 +546,7 @@ def assign_references(frame: pd.DataFrame, counter: int) -> tuple[pd.DataFrame, 
 # --- entry point ---------------------------------------------------------------------
 
 
-def generate(config: SliceConfig) -> pd.DataFrame:
+def generate(config: SliceConfig, *, append: bool = False) -> pd.DataFrame:
     if not SAML_D_CSV.exists():
         raise SystemExit("SAML-D missing -- run: uv run python -m src.ingestion.download")
 
@@ -533,12 +556,22 @@ def generate(config: SliceConfig) -> pd.DataFrame:
     print(f"  {len(window):,} rows in window ({int(window.Is_laundering.sum()):,} flagged)")
 
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-    # Logs from a previous run would outlive the labels CSV, which is rewritten wholesale --
-    # leaving the sidecar describing a corpus that no longer matches what is on disk.
-    for stale in LEDGER_DIR.glob("*_private_banking_log.*"):
-        stale.unlink()
+    # Logs from a previous run would outlive the labels CSV, leaving the sidecar describing a
+    # corpus that no longer matches what is on disk. In append mode only the months being
+    # rewritten are cleared, so a control batch can be added without rebuilding the corpus.
+    stale = (
+        [p for period in periods for p in LEDGER_DIR.glob(f"{period}_private_banking_log.*")]
+        if append
+        else list(LEDGER_DIR.glob("*_private_banking_log.*"))
+    )
+    for path in stale:
+        path.unlink()
 
-    counter = 0
+    existing = (
+        pd.read_csv(LABELS_PATH) if append and LABELS_PATH.exists() else pd.DataFrame()
+    )
+    # :20: references must stay unique across the whole corpus, not just within one run.
+    counter = int(existing.Reference.str[-5:].astype(int).max()) if len(existing) else 0
     labels = []
 
     for rotation, period in enumerate(periods):
@@ -564,6 +597,11 @@ def generate(config: SliceConfig) -> pd.DataFrame:
         )
 
     ledger_labels = pd.concat(labels, ignore_index=True)
+    if len(existing):
+        rewritten = set(ledger_labels.Log_file)
+        ledger_labels = pd.concat(
+            [existing[~existing.Log_file.isin(rewritten)], ledger_labels], ignore_index=True
+        ).sort_values(["Log_file", "Date", "Time"], ignore_index=True)
     ledger_labels.to_csv(LABELS_PATH, index=False)
     print(f"\nLogs      -> {LEDGER_DIR.relative_to(DATA_DIR.parent)}")
     print(f"Labels    -> {LABELS_PATH.relative_to(DATA_DIR.parent)} ({len(ledger_labels):,} rows)")
@@ -578,10 +616,16 @@ def main() -> int:
     parser.add_argument("--cases-per-month", type=int, default=3, help="laundering clusters per log")
     parser.add_argument("--min-cluster", type=int, default=3, help="minimum wires per cluster")
     parser.add_argument("--seed", type=int, default=20260814)
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="keep logs for other months and merge into the existing labels CSV",
+    )
     args = parser.parse_args()
 
     generate(
-        SliceConfig(
+        append=args.append,
+        config=SliceConfig(
             start=args.start,
             months=args.months,
             max_messages=args.max_messages,

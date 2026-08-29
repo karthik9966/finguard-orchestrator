@@ -48,6 +48,40 @@ benchmark all run offline. `OPENAI_API_KEY` is only needed for the `text-embeddi
 benchmark arm and, later, the LangGraph nodes (§4) and DeepEval judge (§8). Everything else
 in `.env.example` ships with a working default.
 
+## Commands
+
+`pyproject.toml` has no `scripts` section -- Python packaging has no equivalent of one. The
+runnable commands are declared as `[project.scripts]` console entry points instead, so `uv sync`
+puts each on PATH:
+
+| command | does | needs a key |
+|---|---|---|
+| `finguard-download` | fetch both corpora, write `data/MANIFEST.json` | no |
+| `finguard-map` | map ObliQA DocumentIDs to document titles | no |
+| `finguard-ledger` | render the SWIFT MT103 monthly logs | no |
+| `finguard-chunk` | semantic chunking -> `data/processed/chunks/*.jsonl` | only `--backend openai` |
+| `finguard-benchmark` | recall@k against the 2,786-question gold set | only `--backend openai` |
+| `finguard-store` | build / inspect / query the ChromaDB collection | no |
+| `finguard-parse` | MT103 batch -> wires, with per-batch stats | no |
+| `finguard-detect` | wires -> candidate patterns | no |
+| `finguard-audit` | batch PDF -> `ComplianceReport` | **yes** |
+
+`finguard-audit` also draws its own graph without running a batch:
+
+```bash
+uv run finguard-audit --ascii            # terminal diagram, fully offline
+uv run finguard-audit --mermaid          # mermaid source, for docs or mermaid.live
+uv run finguard-audit --png docs/graph.png   # posts the node names to mermaid.ink to render
+```
+
+Every one of them is also reachable the long way -- `uv run python -m src.graph.graph` is exactly
+`uv run finguard-audit` -- which is what to use if you are running from a checkout you have not
+synced. The Streamlit panel is not a console script, since it needs Streamlit's own runner:
+
+```bash
+uv run streamlit run src/ui/ingestion_panel.py
+```
+
 ## Data
 
 Two corpora, acquired by script. Neither is committed — `data/raw/` and `data/processed/`
@@ -55,10 +89,10 @@ are gitignored — but `data/MANIFEST.json` records the source URL, sha256, size
 retrieval date of every artifact, so the ~1 GB is reproducible from a few KB of tracked JSON.
 
 ```bash
-uv run python -m src.ingestion.download          # fetch both corpora, write the manifest
-uv run python -m src.ingestion.download --check  # verify what's on disk against the manifest
-uv run python -m src.ingestion.obliqa_map        # map ObliQA DocumentIDs to document titles
-uv run python -m src.utils.pdf_generator         # render SWIFT MT103 monthly logs
+uv run finguard-download          # fetch both corpora, write the manifest
+uv run finguard-download --check  # verify what's on disk against the manifest
+uv run finguard-map               # map ObliQA DocumentIDs to document titles
+uv run finguard-ledger            # render SWIFT MT103 monthly logs
 ```
 
 Nothing here needs credentials. SAML-D is a public Kaggle dataset, and `kagglehub` falls back
@@ -105,8 +139,8 @@ ObliQA carries no document titles and its files are not in DocumentID order, so
 ## Semantic chunking (§3.3)
 
 ```bash
-uv run python -m src.ingestion.loader --backend minilm   # -> data/processed/chunks/minilm.jsonl
-uv run python -m src.ingestion.benchmark                 # recall@k against the gold set
+uv run finguard-chunk --backend minilm  # -> data/processed/chunks/minilm.jsonl
+uv run finguard-benchmark               # recall@k against the gold set
 ```
 
 Two ingestion paths, because the corpora differ structurally. **ObliQA passages are already
@@ -163,10 +197,10 @@ reranker prunes 15 → 4; it cannot add. No prompt or critic loop recovers those
 ## Vector store (§3.4)
 
 ```bash
-uv run python -m src.ingestion.store                      # build the `regulations` collection
-uv run python -m src.ingestion.store --stats              # counts by corpus and tier
-uv run python -m src.ingestion.store --query "transactions structured to avoid reporting thresholds"
-uv run streamlit run src/ui/ingestion_panel.py            # ingestion metrics + rule inventory
+uv run finguard-store                           # build the `regulations` collection
+uv run finguard-store --stats                   # counts by corpus and tier
+uv run finguard-store --query "transactions structured to avoid reporting thresholds"
+uv run streamlit run src/ui/ingestion_panel.py  # ingestion metrics + rule inventory
 ```
 
 **One collection, 12,273 vectors, 46 documents.** Cosine space, idempotent upsert keyed on

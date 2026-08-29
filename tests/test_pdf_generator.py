@@ -210,6 +210,19 @@ def test_logs_respect_the_message_budget(labels):
 
 
 def test_flagged_share_is_visible_but_not_implausible(labels):
+    """A control batch (``--cases-per-month 0``) is legitimately 0%; anything else must carry
+    a share that is findable without being one an auditor would disbelieve."""
     for log_file, group in labels.groupby("Log_file"):
         share = group.Is_laundering.mean()
+        if share == 0:
+            continue
         assert 0.01 <= share <= MAX_FLAGGED_SHARE, f"{log_file} flagged share {share:.1%} is unrealistic"
+
+
+def test_a_control_batch_carries_no_planted_pattern(labels):
+    """The router's "no candidates -> no model" path needs a document with nothing in it."""
+    control = labels[labels.Log_file.str.startswith("2023-05")]
+    if control.empty:
+        pytest.skip("no control batch generated")
+    assert control.Is_laundering.sum() == 0
+    assert len(control) == 220

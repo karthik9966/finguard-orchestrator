@@ -749,6 +749,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "deepeval" },
+    { name = "grandalf" },
     { name = "pytest" },
 ]
 
@@ -777,6 +778,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "deepeval" },
+    { name = "grandalf" },
     { name = "pytest" },
 ]
 
@@ -975,6 +977,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/72/73/74bcab964c9a7a61f2bb71e8179b0f13e6fa98f7ce00fd168aab291e4a2e/googleapis_common_protos-1.75.1.tar.gz", hash = "sha256:d3042c6c5a2d4e67113104d6b6818b59b6bd92a197f2a91508e801fe815cf071", size = 150967, upload-time = "2026-08-06T06:24:51.972Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9a/51/186c02b8549b69ccda44429cf6ff5081e4b61a602ddfe6a8020d1be31d1b/googleapis_common_protos-1.75.1-py3-none-any.whl", hash = "sha256:28a1934bcd33b9c9da66ac301a0a4227e3367f095a17d0375cb98f0a09d93b79", size = 300626, upload-time = "2026-08-06T06:23:46.696Z" },
+]
+
+[[package]]
+name = "grandalf"
+version = "0.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyparsing" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/95/0e/4ac934b416857969f9135dec17ac80660634327e003a870835dd1f382659/grandalf-0.8.tar.gz", hash = "sha256:2813f7aab87f0d20f334a3162ccfbcbf085977134a17a5b516940a93a77ea974", size = 38128, upload-time = "2023-01-26T07:37:06.668Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/61/30/44c7eb0a952478dbb5f2f67df806686d6a7e4b19f6204e091c4f49dc7c69/grandalf-0.8-py3-none-any.whl", hash = "sha256:793ca254442f4a79252ea9ff1ab998e852c1e071b863593e5383afee906b4185", size = 41802, upload-time = "2023-01-10T15:16:19.753Z" },
 ]
 
 [[package]]
@@ -3306,6 +3320,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c3/b2/bc9c9196916376152d655522fdcebac55e66de6603a76a02bca1b6414f6c/pygments-2.20.0.tar.gz", hash = "sha256:6757cd03768053ff99f3039c1a36d6c0aa0b263438fcab17520b30a303a82b5f", size = 4955991, upload-time = "2026-03-29T13:29:33.898Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f4/7e/a72dd26f3b0f4f2bf1dd8923c85f7ceb43172af56d63c7383eb62b332364/pygments-2.20.0-py3-none-any.whl", hash = "sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176", size = 1231151, upload-time = "2026-03-29T13:29:30.038Z" },
+]
+
+[[package]]
+name = "pyparsing"
+version = "3.3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f3/91/9c6ee907786a473bf81c5f53cf703ba0957b23ab84c264080fb5a450416f/pyparsing-3.3.2.tar.gz", hash = "sha256:c777f4d763f140633dcb6d8a3eda953bf7a214dc4eff598413c070bcdc117cbc", size = 6851574, upload-time = "2026-01-21T03:57:59.36Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl", hash = "sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d", size = 122781, upload-time = "2026-01-21T03:57:55.912Z" },
 ]
 
 [[package]]

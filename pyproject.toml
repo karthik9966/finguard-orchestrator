@@ -29,12 +29,26 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest",
+    "grandalf",  # backs `finguard-audit --ascii` (langchain's draw_ascii)
     "deepeval",
     # ragas (blueprint §8) is omitted: 0.4.3 imports
     # langchain_community.chat_models.vertexai, removed in
     # langchain-community 0.4.x. deepeval covers the three
     # blueprint metrics. Revisit when upstream fixes it.
 ]
+
+# `uv sync` puts each on PATH. Every target is a
+# no-argument `main() -> int`; the generated wrapper passes that to sys.exit.
+[project.scripts]
+finguard-audit     = "src.graph.graph:main"          # batch PDF -> ComplianceReport
+finguard-parse     = "src.utils.swift_parser:main"   # MT103 batch -> wires, with stats
+finguard-detect    = "src.utils.detectors:main"      # wires -> candidate patterns
+finguard-ledger    = "src.utils.pdf_generator:main"  # render SWIFT MT103 monthly logs
+finguard-download  = "src.ingestion.download:main"   # fetch both corpora, write the manifest
+finguard-map       = "src.ingestion.obliqa_map:main" # ObliQA DocumentIDs -> document titles
+finguard-chunk     = "src.ingestion.loader:main"     # semantic chunking -> chunks/*.jsonl
+finguard-benchmark = "src.ingestion.benchmark:main"  # recall@k against the gold set
+finguard-store     = "src.ingestion.store:main"      # build / query the ChromaDB collection
 
 [build-system]
 requires = ["hatchling"]
