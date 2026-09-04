@@ -415,7 +415,7 @@ def generate_with(report, draft, monkeypatch, **state_extra):
     state["retrieved_context"] = [clause_doc()]
     state["compliance_draft"] = draft
     state["is_audit_complete"] = True
-    state.update(state_extra)
+    state.update(state_extra) # type: ignore
     return nodes.generate_node(state)["report"]
 
 
@@ -539,7 +539,7 @@ def test_blank_and_duplicate_citations_are_dropped():
 def test_risk_rating_is_constrained():
     with pytest.raises(ValueError):
         ComplianceReport(
-            risk_rating="Catastrophic", flagged_wires=[], applicable_regulations=[],
+            risk_rating="Catastrophic", flagged_wires=[], applicable_regulations=[], # type: ignore
             audit_summary="x", source_document_hashes=[],
         )
 
@@ -641,12 +641,12 @@ def test_the_two_drafts_of_a_looping_run_are_distinguishable_in_the_trace(monkey
 
     state = initial_state("x")
     state["candidates"] = sample_candidates()
-    state.update(nodes.audit_node(state))
+    state.update(nodes.audit_node(state)) # type: ignore
     nodes.draft_node(state)
 
     state["loop_count"] = 1
     state["critique"] = "obligation to report linked transfers"
-    state.update(nodes.audit_node(state))
+    state.update(nodes.audit_node(state)) # type: ignore
     nodes.draft_node(state)
 
     loops = [c["tags"][1] for c in model.configs]
