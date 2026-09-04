@@ -24,6 +24,7 @@ from langchain_core.documents import Document
 from src.graph import prompts
 from src.graph.state import (
     CONFIDENCE_THRESHOLD,
+    HIGH_RISK_CONFIDENCE,
     MAX_REFINEMENTS,
     AgentState,
     ComplianceReport,
@@ -41,8 +42,29 @@ RETRIEVE_K = 15
 # and FINRA 19-18 rank 1, 2, 6 and 4 -- the noise underneath them was.
 #
 # 24 rather than 15 because 14.2.3.Guidance.1., the clause the June structuring cluster turns
-# on, sits at rank 20. §9.4's reranker replaces this crude cut with a scored one.
+# on, only reaches rank 10 of 93 once the lists are fused. §9.4's reranker is the experiment that
+# decides whether this crude cut can come down toward the blueprint's 4.
 MAX_CONTEXT_CLAUSES = 24
+
+# Reciprocal rank fusion. Each query's distances are measured against its own vector, so they are
+# not comparable across queries: on the June batch the seven queries' best hits span 0.3433 to
+# 0.4827, and pooling every hit into one distance sort therefore ranks *how easy the question
+# was* above *how good the answer is* -- the hardest query's champion lands below easier queries'
+# also-rans. RRF scores a clause only by its position within the list it came from, which is
+# immune to that. Measured on June, it moves 14.2.3.Guidance.1. from rank 20 to rank 10; the two
+# intuitive alternatives are worse (round-robin 23, min-max normalised distance 42). 60 is the
+# constant from the original paper -- it damps the top of each list so a single query's rank-1
+# cannot dominate a clause that several queries agree on.
+RRF_K = 60
+
+# Seats held for the critic's reformulated query on a loop-back. Without them the refinement is
+# very nearly inert: after seven queries the 24th incumbent already holds an RRF score of
+# 0.01562, while a brand-new clause at rank 1 of a single list scores 1/(60+1) = 0.01639 -- a
+# margin so thin that only the refinement's *first* hit can clear it and ranks 2-15 are all cut.
+# Measured on June: 1 new clause out of 15 retrieved. The loop exists to fill a gap the first
+# pass missed, so the clauses that answer the critic's question cannot be made to out-argue
+# seven queries' worth of accumulated agreement -- they have to be let in.
+REFINEMENT_RESERVE = 5
 
 # Tier 1 is the AML-bearing corpus. A cross-border leg opens tier 2 -- the wider ADGM rulebook
 # carries the cross-border and correspondent-banking obligations. This is a deterministic rule
@@ -191,7 +213,8 @@ def audit_node(state: AgentState) -> dict[str, Any]:
 
     On a refinement pass the critic's reformulated query is used instead, and its results are
     *added* to what is already held -- the loop is there to fill a gap, not to trade one
-    incomplete context for another.
+    incomplete context for another. Its hits fuse into the running RRF score the same way, so a
+    clause the first pass already found is reinforced rather than re-scored from scratch.
     """
     queries = list(state.get("queries", []))
     if state.get("loop_count", 0) and state.get("critique"):
@@ -205,17 +228,41 @@ def audit_node(state: AgentState) -> dict[str, Any]:
 
     tiers = tiers_for(state["candidates"]) # type: ignore
     documents = {d.metadata["chunk_id"]: d for d in state.get("retrieved_context", [])}
+    refining = bool(state.get("loop_count", 0)) and bool(state.get("critique"))
+    reserved: list[str] = []
     for query in new_queries:
-        for hit in retrieve(query, k=RETRIEVE_K, tiers=tiers):
-            documents.setdefault(
-                hit["chunk_id"],
-                Document(
+        for rank, hit in enumerate(retrieve(query, k=RETRIEVE_K, tiers=tiers), start=1):
+            if refining and rank <= REFINEMENT_RESERVE:
+                reserved.append(hit["chunk_id"])
+            document = documents.get(hit["chunk_id"])
+            if document is None:
+                document = Document(
                     page_content=hit["text"],
                     metadata={k: v for k, v in hit.items() if k != "text"},
-                ),
+                )
+                documents[hit["chunk_id"]] = document
+            document.metadata["rrf"] = document.metadata.get("rrf", 0.0) + 1 / (RRF_K + rank)
+            # A clause several queries return keeps the best distance it earned, not whichever
+            # query happened to reach it first. The distance no longer decides the order, but it
+            # is reported, and reporting the worse of two scores for no reason is a lie.
+            document.metadata["distance"] = min(
+                document.metadata.get("distance", hit["distance"]), hit["distance"]
             )
 
-    ranked = sorted(documents.values(), key=lambda d: d.metadata["distance"])
+    if not documents:
+        # §4.2's third fallback. Drafting against an empty regulations block would produce a SAR
+        # that cites nothing and looks confident doing it; with 12,273 chunks indexed this state
+        # means the store is unreachable or the tier filter excluded everything, which is a
+        # fault, not a finding. `no_findings_node` already covers "nothing to report".
+        raise ValueError(
+            f"{len(new_queries)} queries against tiers {tiers} retrieved no clauses at all -- "
+            f"the vector store is empty or unreachable"
+        )
+
+    ranked = sorted(documents.values(), key=lambda d: d.metadata.get("rrf", 0.0), reverse=True)
+    if reserved:
+        held = [documents[chunk_id] for chunk_id in dict.fromkeys(reserved)]
+        ranked = held + [d for d in ranked if d.metadata["chunk_id"] not in set(reserved)]
     return {
         "queries": queries + new_queries,
         "retrieved_context": ranked[:MAX_CONTEXT_CLAUSES],
@@ -371,6 +418,15 @@ def generate_node(state: AgentState) -> dict[str, Any]:
     # as written. A model asked for identifiers reaches for the numbers most present in its
     # context, which is how account 6123421761 ended up in a field specified as wire references.
     report.source_document_hashes = cited_chunk_ids(state["compliance_draft"], state["retrieved_context"]) # type: ignore
+
+    # Third repair, and the one the live runs forced. The rating is the model's reading of the
+    # draft alone: GENERATE_SYSTEM says High when a cited clause imposes a reporting obligation,
+    # and the model applies that faithfully to a draft the critic has already called thin. Across
+    # the four batches the result was anti-correlated with the truth -- clean May (0 laundering)
+    # came back High recommending a SAR, July (23 laundering) came back Low. High means *file*,
+    # so it has to clear the critic's top band, not merely score enough to stop the loop.
+    if report.risk_rating == "High" and state.get("confidence_score", 0.0) < HIGH_RISK_CONFIDENCE: # type: ignore
+        report.risk_rating = "Medium"
 
     known = {wire.reference for wire in state["wires"]} # type: ignore
     flagged = [reference for reference in report.flagged_wires if reference in known] # type: ignore

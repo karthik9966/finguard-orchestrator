@@ -49,7 +49,7 @@ class BackendMismatch(RuntimeError):
     """Raised when a collection is queried with a different model than built it."""
 
 
-def _client() -> chromadb.ClientAPI:
+def _client() -> chromadb.ClientAPI: # type: ignore
     PERSIST_DIR.mkdir(parents=True, exist_ok=True)
     return chromadb.PersistentClient(
         path=str(PERSIST_DIR), settings=Settings(anonymized_telemetry=False)
@@ -156,19 +156,19 @@ def retrieve(
             "their vector spaces are not comparable"
         )
 
-    with get_backend(backend_name) as backend:
+    with get_backend(backend_name) as backend: # type: ignore
         vector = backend.encode([query])[0].tolist()
 
     where = {"relevance_tier": {"$in": list(tiers)}} if tiers else None
-    result = collection.query(query_embeddings=[vector], n_results=k, where=where)
+    result = collection.query(query_embeddings=[vector], n_results=k, where=where) # type: ignore
 
     return [
         {"chunk_id": cid, "text": doc, "distance": dist, **meta}
         for cid, doc, dist, meta in zip(
             result["ids"][0],
-            result["documents"][0],
-            result["distances"][0],
-            result["metadatas"][0],
+            result["documents"][0], # type: ignore
+            result["distances"][0], # type: ignore
+            result["metadatas"][0], # type: ignore
         )
     ]
 
@@ -184,9 +184,9 @@ def stats() -> dict:
         "backend": collection.metadata.get("backend"),
         "model": collection.metadata.get("model"),
         "built": collection.metadata.get("built"),
-        "by_corpus": dict(Counter(m["corpus"] for m in metadatas)),
-        "by_tier": dict(sorted(Counter(m["relevance_tier"] for m in metadatas).items())),
-        "undated": sum(1 for m in metadatas if "last_updated_date" not in m),
+        "by_corpus": dict(Counter(m["corpus"] for m in metadatas)), # type: ignore
+        "by_tier": dict(sorted(Counter(m["relevance_tier"] for m in metadatas).items())), # type: ignore
+        "undated": sum(1 for m in metadatas if "last_updated_date" not in m), # type: ignore
     }
 
 
@@ -195,9 +195,9 @@ def inventory() -> list[dict]:
     client = _client()
     collection = client.get_collection(COLLECTION_NAME)
     rows: dict[str, dict] = {}
-    for meta in collection.get(include=["metadatas"])["metadatas"]:
+    for meta in collection.get(include=["metadatas"])["metadatas"]: # type: ignore
         row = rows.setdefault(
-            meta["document_title"],
+            meta["document_title"], # type: ignore
             {
                 "document": meta["document_title"],
                 "corpus": meta["corpus"],
@@ -221,6 +221,7 @@ def print_stats(payload: dict) -> None:
 
 
 def main() -> int:
+    assert __doc__ is not None
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--backend", default="minilm", choices=list(BACKENDS))
     parser.add_argument("--rebuild", action="store_true", help="drop the collection first")

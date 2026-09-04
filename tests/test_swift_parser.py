@@ -81,8 +81,10 @@ def test_the_naive_reading_would_be_a_hundredfold_error():
     assert float(raw.replace(",", "")) == 581046.0, "the trap is still a trap"
 
 
-def test_a_dot_is_refused_rather_than_interpreted():
-    """1.234 could be one-point-two-three-four or one thousand; we cannot tell, so we stop."""
+def test_a_dot_earns_a_refusal_that_names_the_format():
+    """The dot branch is not what makes this safe -- ``count(",") != 1`` and ``Decimal`` already
+    reject every string it catches. What it adds is the wording, and the wording is load-bearing:
+    it becomes ``MalformedMessage.reason``, which ``escalate()`` shows the fallback model."""
     with pytest.raises(ValueError, match=r"does not permit"):
         parse_amount("5,669.49")
 

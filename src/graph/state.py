@@ -27,6 +27,13 @@ RiskRating = Literal["Low", "Medium", "High"]
 CONFIDENCE_THRESHOLD = 0.75
 MAX_REFINEMENTS = 2
 
+# The bar a finding must clear before it may be filed as High risk. CRITIC_SYSTEM's own scale
+# reserves 1.0 for "every regulatory claim cites a retrieved clause that genuinely says what is
+# claimed" and puts 0.75 at "supported, but thin -- a claim leans on a clause that is only
+# loosely on point". High means *file a SAR*, so it needs the top band, not merely enough score
+# to stop the refinement loop.
+HIGH_RISK_CONFIDENCE = 0.9
+
 
 class AgentState(TypedDict, total=False):
     """§4.1's schema, plus the batch fields Phase 2's deterministic nodes need.

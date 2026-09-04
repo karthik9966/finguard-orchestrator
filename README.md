@@ -232,13 +232,104 @@ nonsense rather than an error.
 > Laundering: Development of a Synthetic Transaction Monitoring Dataset," *2023 IEEE ICEBE*,
 > pp. 47–54, doi:10.1109/ICEBE59045.2023.00028
 
+## LangGraph agent core (§4)
+
+```bash
+uv run finguard-audit --batch data/processed/ledger/2023-06_private_banking_log.pdf
+```
+
+Seven nodes turn a batch of 220 MT103 messages into a `ComplianceReport`. **Four are free and
+three call a model** -- the organising rule is that anything with a right answer is code, and only
+judgement is bought.
+
+```mermaid
+graph TD;
+    __start__([__start__]) --> parse;
+    parse --> detect;
+    detect -.-> audit;
+    detect -.-> no_findings;
+    audit --> draft;
+    draft --> critic;
+    critic -.-> audit;
+    critic -.-> generate;
+    generate --> __end__([__end__]);
+    no_findings --> __end__;
+```
+
+Solid edges are unconditional; dotted ones are `add_conditional_edges`, where a Python function
+picks the destination at run time. `uv run finguard-audit --ascii` draws the same graph in the
+terminal, `--png FILE` renders it via mermaid.ink.
+
+| node | cost | what it decides |
+|---|---|---|
+| `parse` | free | text -> typed `Wire`s. A *malformed* message escalates alone to `gpt-4o-mini`; the other 219 stay free |
+| `detect` | free | four shape primitives over the wires -> candidates |
+| `route_after_detect` | free | no candidates -> `no_findings`, **END at $0.00** |
+| `audit` | free | candidate geometry -> obligation-shaped queries -> ChromaDB |
+| `draft` | `gpt-4o` | findings connecting patterns to clauses |
+| `critic` | `gpt-4o` | Python citation veto, then a support score |
+| `generate` | `gpt-4o` | the filing schema |
+
+The backward edge `critic -> audit` is the only reason this is a graph rather than a chain. It
+returns to *retrieval*, not to drafting, because a thin finding is usually missing law rather
+than bad writing -- and a template cannot fix that, since it would ask the identical question
+again. Two refinements, then it ships with its reservations recorded.
+
+**The audit node buys nothing.** Queries are templates keyed on `candidate.shape`, because Phase 1
+measured that phrasing decides retrieval: the same facts ranked the correct clause 11,268/12,273
+as raw JSON, 315th as a narrative and **5th** as an obligation. Only the critic's reformulated
+query is model-written, and only on a loop-back.
+
+### What is enforced in Python, not asked of the model
+
+- **The citation veto.** Every clause a draft cites is checked against what was actually
+  retrieved. One that is not there is a fabrication and the score becomes `0.0` -- a veto, not a
+  penalty. Arithmetic, so it runs on every commit rather than being admired once.
+- **`flagged_wires` and `source_document_hashes`** are derived from the ledger and the retrieved
+  set. Asked for them directly the model returned account numbers in a field specified as wire
+  references, and an empty hash list beside a live citation.
+- **`risk_rating` is capped at Medium below `HIGH_RISK_CONFIDENCE`.** High means *file a SAR*, so
+  it has to clear the critic's top band rather than merely score enough to stop the loop.
+- **Retrieval merges by reciprocal rank fusion.** Distances from different queries are not
+  comparable -- on June the seven queries' best hits span 0.3433 to 0.4827, so a raw distance sort
+  ranks *how easy the question was* above *how good the answer is*. RRF moves the clause June
+  cites from rank 20 to 10. The refinement query gets reserved seats, because after seven queries
+  no single new list can out-score the incumbents.
+
+### Measured
+
+Parser: **880/880 wires across four batches**, every field matching `ledger_labels.csv`, PDF and
+TXT identical. Detectors: **100% recall (52/52 laundering wires), 32% precision**, 164/660 swept.
+
+Recall is the metric that matters -- a missed launderer is a regulatory failure, a false alarm
+costs an analyst minutes. Detector precision work is deferred.
+
+Live runs, one per batch, three `gpt-4o` calls each:
+
+| batch | laundering (truth) | candidates | queries | critic passes | confidence | risk |
+|---|---|---|---|---|---|---|
+| 2023-05 *(clean control)* | 0 | 1 | 3 | 2 | 0.50 | Medium |
+| 2023-06 | 21 | 7 | 8 | 2 | 0.50 | Medium |
+| 2023-07 | 23 | 16 | 8 | 2 | 0.50 | Medium |
+| 2023-08 | 8 | 6 | 7 | 1 | 0.75 | Medium |
+
+**Known limitation, recorded rather than hidden:** the rating does not yet separate a clean batch
+from a dirty one -- all four read Medium, and May's single candidate is a legitimate GBP 337,217
+consultancy fee at 53.7x the batch median. Before the cap it read *High, file a SAR*, while July
+with 23 laundering wires read *Low*. Quantifying that is what §8's eval suite is for; tuning it by
+hand against one report at a time is the unmeasured approach that suite exists to replace.
+
 ## Roadmap
 
-- [ ] Phase 1 — Ingestion & semantic grounding
+- [x] Phase 1 — Ingestion & semantic grounding
   - [x] §3.1 Environment setup
   - [x] §3.2 Dataset acquisition & SWIFT log generation
   - [x] §3.3 Semantic chunking (cosine distance)
   - [x] §3.4 ChromaDB loading & metadata
-- [ ] Phase 2 — LangGraph agent core
+- [x] Phase 2 — LangGraph agent core
+  - [x] §4.1 Global `AgentState` schema
+  - [x] §4.2 Extraction & AML Audit nodes wired with LangGraph
+  - [x] §4.2 Auditor Critic node with refinement loops back to ChromaDB
+  - [x] §4.2 Fallback routes — malformed message, unreadable batch, empty retrieval
 - [ ] Phase 3 — Observability, evals, cost optimization
 - [ ] Phase 4 — Streamlit cockpit & Docker packaging

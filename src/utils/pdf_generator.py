@@ -379,7 +379,7 @@ def select_chain(cases: pd.DataFrame, max_hops: int = 10) -> pd.Index:
     """
     edges: dict[int, list[tuple[int, int]]] = defaultdict(list)
     for index, row in cases.iterrows():
-        edges[int(row.Sender_account)].append((int(row.Receiver_account), index))
+        edges[int(row.Sender_account)].append((int(row.Receiver_account), index)) # type: ignore
 
     longest: list[int] = []
     for start in edges:
@@ -609,6 +609,7 @@ def generate(config: SliceConfig, *, append: bool = False) -> pd.DataFrame:
 
 
 def main() -> int:
+    assert __doc__ is not None
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--start", default="2023-06", help="first month, YYYY-MM")
     parser.add_argument("--months", type=int, default=3)

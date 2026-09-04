@@ -222,9 +222,16 @@ def read_fields(lines: list[str]) -> dict[str, list[str]]:
 def parse_amount(raw: str) -> Decimal:
     """SWIFT writes 5669,49 -- comma decimal, no thousands separator, mandatory decimal comma.
 
-    A dot here means the value has been reformatted by something upstream and we can no longer
-    tell 1.234 (one point two three four) from 1.234 (one thousand two hundred thirty four),
-    so we refuse instead of picking one.
+    The rule that actually enforces the format is ``count(",") != 1``: it is what stops
+    ``"5810,46"`` being read as 581046.00, a hundredfold error inside a regulatory filing.
+
+    The dot branch below is *not* a second correctness guard, and describing it as one would be
+    wrong -- every string it rejects is already caught either by that comma count (``"5,669.49"``,
+    ``"5.669,49"``) or by ``Decimal`` refusing to parse (``"1.234"`` has no comma at all). It is
+    unreachable as a check. What it earns is a refusal that names the format, and that text is
+    not decoration: ``MalformedMessage.reason`` is handed to ``escalate()`` and shown to the
+    fallback model, which reads better instructions when it is told the message broke MT103's
+    decimal convention than when it is told a comma count was wrong.
     """
     if "." in raw:
         raise ValueError(f"amount {raw!r} contains '.', which MT103 does not permit")

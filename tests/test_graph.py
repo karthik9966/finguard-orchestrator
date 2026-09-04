@@ -16,6 +16,7 @@ from src.graph import nodes, prompts
 from src.graph.graph import build_graph
 from src.graph.state import (
     CONFIDENCE_THRESHOLD,
+    HIGH_RISK_CONFIDENCE,
     MAX_REFINEMENTS,
     ComplianceReport,
     initial_state,
@@ -224,8 +225,8 @@ def test_audit_node_deduplicates_clauses_and_ranks_them(stub_retrieval):
     assert len(update["queries"]) == len(set(update["queries"])), "no query is asked twice"
     ids = [d.metadata["chunk_id"] for d in update["retrieved_context"]]
     assert len(ids) == len(set(ids)) == 2, "the same clause from two queries is held once"
-    distances = [d.metadata["distance"] for d in update["retrieved_context"]]
-    assert distances == sorted(distances)
+    scores = [d.metadata["rrf"] for d in update["retrieved_context"]]
+    assert scores == sorted(scores, reverse=True), "fused rank decides the order, not distance"
 
 
 def test_a_refinement_pass_asks_the_critics_question_and_keeps_what_it_had(stub_retrieval):
@@ -241,6 +242,87 @@ def test_a_refinement_pass_asks_the_critics_question_and_keeps_what_it_had(stub_
     held = {d.metadata["chunk_id"] for d in update["retrieved_context"]}
     assert "already:held:1" in held, "refinement adds context, it does not replace it"
     assert CHUNK_ID in held
+
+
+def test_a_clause_two_queries_return_keeps_the_best_distance_it_earned(monkeypatch):
+    """`setdefault` used to keep whichever query reached a clause first. On the June batch that
+    stored 0.4442 for the clause the report cites when it had also earned 0.4365, purely by loop
+    order -- 7 of 93 clauses held a worse score than they had."""
+    scores = iter([0.48, 0.31])
+
+    def fake(query, *, k=15, tiers=None, backend_name=None):
+        return [dict(clause_doc(distance=next(scores)).metadata,
+                     text="A Relevant Person must report structured transactions.")]
+
+    monkeypatch.setattr(nodes, "retrieve", fake)
+    state = initial_state("x")
+    state["candidates"] = sample_candidates()
+
+    held = nodes.audit_node(state)["retrieved_context"]
+    assert len(held) == 1
+    assert held[0].metadata["distance"] == 0.31, "the worse score must not win on loop order"
+
+
+def test_a_hard_querys_best_answer_is_not_buried_by_an_easy_querys_tail(monkeypatch):
+    """Distances are measured against each query's own vector, so they do not compare across
+    queries. On June the seven queries' best hits spanned 0.3433 to 0.4827 -- pooling them into
+    one distance sort ranked *how easy the question was* above *how good the answer is*."""
+    easy = [{"chunk_id": f"easy:{i}", "text": "t", "distance": 0.10 + i / 100,
+             "section_clause": f"1.{i}", "document_title": "COBS", "relevance_tier": 1}
+            for i in range(3)]
+    hard = [{"chunk_id": "hard:top", "text": "t", "distance": 0.40,
+             "section_clause": "14.2.3.Guidance.1.", "document_title": "AML Rulebook",
+             "relevance_tier": 1}]
+    answers = iter([easy, hard])
+    monkeypatch.setattr(nodes, "retrieve", lambda query, **kw: next(answers))
+
+    state = initial_state("x")
+    state["candidates"] = sample_candidates()
+    update = nodes.audit_node(state)
+    # The premise: one easy query and one hard one. Stated so this fails loudly rather than
+    # quietly inverting if the fixture ever asks a different number of questions.
+    assert len(update["queries"]) == 2
+
+    order = [d.metadata["chunk_id"] for d in update["retrieved_context"]]
+    # Under the old raw-distance sort this clause came last of four, at 0.40 against 0.10-0.12.
+    assert order.index("hard:top") < order.index("easy:1")
+    assert order.index("hard:top") < order.index("easy:2")
+
+
+def test_retrieving_nothing_at_all_stops_before_a_model_is_reached(monkeypatch):
+    """§4.2's third fallback. An empty regulations block would yield a SAR that cites nothing and
+    looks confident doing it -- and with 12,273 chunks indexed, this state is a broken store."""
+    monkeypatch.setattr(nodes, "retrieve", lambda query, **kw: [])
+    state = initial_state("x")
+    state["candidates"] = sample_candidates()
+
+    with pytest.raises(ValueError, match="retrieved no clauses at all"):
+        nodes.audit_node(state)
+
+
+def test_the_refinement_query_gets_seats_it_cannot_win_on_score(monkeypatch):
+    """RRF accumulates, so after seven queries an incumbent holds far more score than any hit
+    from the single refinement list can earn. Left to compete, the loop brings in one clause of
+    fifteen and is effectively inert -- so the critic's answer is seated, not ranked."""
+    incumbents = [clause_doc(f"held:{i}", f"1.{i}", 0.20) for i in range(nodes.MAX_CONTEXT_CLAUSES)]
+    for doc in incumbents:
+        doc.metadata["rrf"] = 0.9  # seven queries' worth of agreement
+
+    fresh = [{"chunk_id": f"fresh:{i}", "text": "t", "distance": 0.45,
+              "section_clause": f"9.{i}", "document_title": "AML Rulebook", "relevance_tier": 1}
+             for i in range(nodes.RETRIEVE_K)]
+    monkeypatch.setattr(nodes, "retrieve", lambda query, **kw: fresh)
+
+    state = initial_state("x")
+    state["candidates"] = sample_candidates()
+    state["loop_count"] = 1
+    state["critique"] = "obligation to report linked transfers above a threshold"
+    state["retrieved_context"] = incumbents
+
+    held = [d.metadata["chunk_id"] for d in nodes.audit_node(state)["retrieved_context"]]
+    arrived = [c for c in held if c.startswith("fresh:")]
+    assert len(arrived) == nodes.REFINEMENT_RESERVE, "the reserved seats are actually filled"
+    assert held[: nodes.REFINEMENT_RESERVE] == arrived, "and they are read first, not last"
 
 
 # --- 5. the citation gate -------------------------------------------------------------------
@@ -332,6 +414,37 @@ def generate_with(report, draft, monkeypatch, **state_extra):
     state["is_audit_complete"] = True
     state.update(state_extra)
     return nodes.generate_node(state)["report"]
+
+
+def test_a_thin_finding_cannot_be_filed_as_high_risk(monkeypatch):
+    """The live runs made this necessary. On clean May -- 0 laundering in the answer key -- the
+    model rated its one false-positive candidate High and recommended filing a SAR, off a draft
+    the critic scored 0.75 ("supported, but thin"). Meanwhile July, with 23 laundering wires,
+    came back Low. High means *file*, so it must clear the critic's top band."""
+    def high(): return ComplianceReport(
+        risk_rating="High", flagged_wires=["FGO1"],
+        applicable_regulations=[f"AML Rulebook {CLAUSE}"],
+        audit_summary="x", source_document_hashes=[],
+    )
+    draft = f"Reported under [AML Rulebook {CLAUSE}]."
+
+    thin = generate_with(high(), draft, monkeypatch, confidence_score=CONFIDENCE_THRESHOLD)
+    assert thin.risk_rating == "Medium", "0.75 stops the loop; it does not justify a filing"
+
+    solid = generate_with(high(), draft, monkeypatch, confidence_score=1.0)
+    assert solid.risk_rating == "High", "a fully grounded finding keeps the rating it earned"
+
+
+def test_the_cap_only_ever_lowers_a_rating(monkeypatch):
+    """A weak Medium is not promoted, and Low is never touched -- under-rating a real finding is
+    the dangerous direction of error in an AML filing."""
+    for rating in ("Low", "Medium"):
+        report = ComplianceReport(
+            risk_rating=rating, flagged_wires=["FGO1"], applicable_regulations=[],
+            audit_summary="x", source_document_hashes=[],
+        )
+        result = generate_with(report, "No clause was on point.", monkeypatch, confidence_score=0.0)
+        assert result.risk_rating == rating
 
 
 def test_hashes_are_derived_from_the_draft_not_taken_on_trust(monkeypatch):
