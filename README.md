@@ -240,7 +240,8 @@ uv run finguard-audit --batch data/processed/ledger/2023-06_private_banking_log.
 
 Seven nodes turn a batch of 220 MT103 messages into a `ComplianceReport`. **Four are free and
 three call a model** -- the organising rule is that anything with a right answer is code, and only
-judgement is bought.
+judgement is bought. Three is the count when the critic passes first time; each refinement adds a
+draft and a critic call, so a run that loops once costs five.
 
 ```mermaid
 graph TD;
@@ -318,6 +319,56 @@ from a dirty one -- all four read Medium, and May's single candidate is a legiti
 consultancy fee at 53.7x the batch median. Before the cap it read *High, file a SAR*, while July
 with 23 laundering wires read *Low*. Quantifying that is what §8's eval suite is for; tuning it by
 hand against one report at a time is the unmeasured approach that suite exists to replace.
+
+## Observability (§7)
+
+```bash
+export LANGCHAIN_TRACING_V2=true
+export LANGCHAIN_API_KEY=...            # from smith.langchain.com
+export LANGCHAIN_PROJECT=finguard-orchestrator
+
+uv run finguard-audit --batch <path> --tag NIGHTLY
+```
+
+Every run prints its own identity before it starts working, so a trace can be found again:
+
+```
+audit_id   : aud-b38323fd2cd1
+tracing    : LangSmith project 'finguard-orchestrator'
+```
+
+`tracing: off` when the variables are unset — reported rather than assumed, because a trace that
+is silently not being written is worse than none: you go looking for it after the run instead of
+before.
+
+**Metadata is attached at two levels, and it has to be.** The blueprint's §7.2 example reads
+`batch_wire_count` from state at `invoke()` time, where it is always zero — PARSE has not run
+yet. So the run-level config carries only what is knowable up front (the `audit_id` every span
+shares, the batch name, `AML_AUDIT_RUN` plus any `--tag`), and `nodes.trace_config` attaches the
+rest to each model call as it happens:
+
+| | on the run | on each model call |
+|---|---|---|
+| `audit_id`, batch, tags | ✓ | |
+| wire / candidate count, shapes | | ✓ |
+| clause count, `loop:N` tag | | ✓ |
+
+That split is what makes §7.2's actual question answerable — *which context block caused the
+critic to trigger a loop revision*. The two drafts of a looping run carry different `loop:` tags,
+so they are distinguishable in the trace instead of being two identical-looking spans. (Clause
+count does *not* separate them once retrieval is at the `MAX_CONTEXT_CLAUSES` cap — a verified
+May run shows 24 on both passes — which is exactly why the loop number is tagged.)
+
+Verified against a live project: a May run tagged `VERIFY_B1` produced a root span carrying
+`['VERIFY_B1', 'AML_AUDIT_RUN']` and the `audit_id` printed by the CLI, with `node:draft` spans at
+`loop:0` and `loop:1` beneath it.
+
+Costs nothing when tracing is off: LangChain ignores the config unless `LANGCHAIN_TRACING_V2` is
+set, and the whole suite runs with it unset.
+
+**This sends data to a hosted service.** Prompts leave the machine, including the SWIFT payment
+lines inside them. That is fine for the synthetic ledger in this repo and is worth deciding
+deliberately before it is pointed at anything real.
 
 ## Roadmap
 

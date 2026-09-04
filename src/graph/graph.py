@@ -17,8 +17,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
+from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
 
 from src.graph.nodes import (
@@ -69,15 +73,59 @@ def build_graph():
     return graph.compile()
 
 
-def audit_batch(batch_path: str) -> AgentState:
-    return build_graph().invoke(initial_state(batch_path)) # type: ignore
+# Explicit, not incidental. The tracing variables did reach the process before this line -- via
+# graph -> nodes -> store -> embeddings, which calls load_dotenv for its own API key -- but that
+# is a chain of imports none of which exists for this reason. Rearranging any of them would turn
+# tracing off silently, which is the one failure mode `tracing_project()` exists to prevent.
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+
+
+def tracing_project() -> str | None:
+    """The LangSmith project this run will land in, or None when tracing is off (§7.1).
+
+    Reported rather than assumed: a trace that silently is not being written is worse than no
+    tracing at all, because you go looking for it after the run instead of before.
+    """
+    enabled = os.environ.get("LANGCHAIN_TRACING_V2", "").strip().lower() in {"true", "1", "yes"}
+    if not enabled or not os.environ.get("LANGCHAIN_API_KEY"):
+        return None
+    return os.environ.get("LANGCHAIN_PROJECT", "default")
+
+
+def run_config(batch_path: str, *, tags: list[str] | None = None,
+               metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    """§7.2's scoped run configuration -- the half of it that is knowable before the run.
+
+    Batch-derived numbers (wires, candidates) do not exist yet: PARSE has not run. Those are
+    attached per model call by ``nodes.trace_config`` instead. What belongs here is the identity
+    of the run, so every span underneath it shares one searchable id.
+    """
+    return {
+        "tags": ["AML_AUDIT_RUN", *(tags or [])],
+        "metadata": {
+            "audit_id": f"aud-{uuid4().hex[:12]}",
+            "batch": Path(batch_path).name,
+            **(metadata or {}),
+        },
+    }
+
+
+def audit_batch(batch_path: str, *, tags: list[str] | None = None,
+                metadata: dict[str, Any] | None = None) -> AgentState:
+    config = run_config(batch_path, tags=tags, metadata=metadata)
+    state = build_graph().invoke(initial_state(batch_path), config=config) # type: ignore
+    state["audit_id"] = config["metadata"]["audit_id"]
+    return state # type: ignore
 
 
 def print_run(state: AgentState) -> None:
     entities = state.get("extracted_entities", {})
     report = state.get("report")
 
-    print(f"\nbatch      : {entities.get('batch')}")
+    project = tracing_project()
+    print(f"\naudit_id   : {state.get('audit_id', '-')}")
+    print(f"tracing    : {f'LangSmith project {project!r}' if project else 'off'}")
+    print(f"batch      : {entities.get('batch')}")
     print(f"parsed     : {entities.get('parsed_messages')} of {entities.get('declared_messages')}")
     if state.get("extraction_failures"):
         rescued = sum(1 for f in state["extraction_failures"] if f["rescued_by_model"]) # type: ignore
@@ -106,6 +154,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--batch", type=existing_log, help="a .pdf or .txt batch log")
     parser.add_argument("--json", type=Path, help="also write the report as JSON")
+    parser.add_argument("--tag", action="append", metavar="TAG", default=[],
+                        help="extra LangSmith run tag; repeatable")
     parser.add_argument("--mermaid", action="store_true", help="print the graph and exit")
     parser.add_argument("--ascii", action="store_true", help="draw the graph in the terminal")
     parser.add_argument(
@@ -133,7 +183,7 @@ def main() -> int:
     if args.batch is None:
         parser.error("--batch is required (or use --mermaid/--ascii/--png to draw the graph)")
 
-    state = audit_batch(str(args.batch))
+    state = audit_batch(str(args.batch), tags=args.tag)
     print_run(state)
 
     if args.json and state.get("report") is not None:

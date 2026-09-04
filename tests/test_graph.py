@@ -55,19 +55,22 @@ class StubResponse:
 class StubModel:
     """Stands in for ChatOpenAI. Returns whatever the test queued, and records the prompts."""
 
-    def __init__(self, text: str = "draft", structured=None, calls: list | None = None):
+    def __init__(self, text: str = "draft", structured=None, calls: list | None = None,
+                 configs: list | None = None):
         self.text = text
         self.structured = structured
         self.calls = calls if calls is not None else []
+        self.configs = configs if configs is not None else []
         self._schema = None
 
     def with_structured_output(self, schema):
-        clone = StubModel(self.text, self.structured, self.calls)
+        clone = StubModel(self.text, self.structured, self.calls, self.configs)
         clone._schema = schema
         return clone
 
-    def invoke(self, messages):
+    def invoke(self, messages, config=None):
         self.calls.append(messages)
+        self.configs.append(config)
         if self._schema is None:
             return StubResponse(self.text(len(self.calls)) if callable(self.text) else self.text)
         value = self.structured
@@ -594,3 +597,74 @@ def test_a_clean_batch_never_reaches_a_model(monkeypatch):
     assert state["report"].risk_rating == "Low"
     assert state["report"].flagged_wires == []
     assert state["loop_count"] == 0
+
+# --- 7. tracing (§7) ------------------------------------------------------------------------
+
+
+def test_every_run_carries_one_searchable_id():
+    """§7.2's point: one id shared by every span, so a run can be found again afterwards."""
+    from src.graph.graph import run_config
+
+    config = run_config("data/processed/ledger/2023-06_private_banking_log.pdf", tags=["NIGHTLY"])
+    assert "AML_AUDIT_RUN" in config["tags"] and "NIGHTLY" in config["tags"]
+    assert config["metadata"]["batch"] == "2023-06_private_banking_log.pdf"
+    assert config["metadata"]["audit_id"].startswith("aud-")
+    assert run_config("x")["metadata"]["audit_id"] != run_config("x")["metadata"]["audit_id"]
+
+
+def test_the_run_config_cannot_carry_what_it_does_not_know_yet():
+    """Wire and candidate counts do not exist at invoke() -- PARSE has not run. The blueprint's
+    §7.2 example reads them from state before the call, which would always be zero."""
+    from src.graph.graph import run_config
+
+    assert "wire_count" not in run_config("x")["metadata"]
+
+
+def test_a_model_call_is_tagged_with_the_state_it_was_made_in():
+    state = initial_state("data/processed/ledger/2023-06_private_banking_log.pdf")
+    state["candidates"] = sample_candidates()
+    state["retrieved_context"] = [clause_doc()]
+    state["loop_count"] = 1
+
+    config = nodes.trace_config(state, "critic")
+    assert config["tags"] == ["node:critic", "loop:1"]
+    assert config["metadata"]["batch"] == "2023-06_private_banking_log.pdf"
+    assert config["metadata"]["clause_count"] == 1
+    assert config["metadata"]["shapes"] == [CONCENTRATION]
+
+
+def test_the_two_drafts_of_a_looping_run_are_distinguishable_in_the_trace(monkeypatch, stub_retrieval):
+    """The question §7.2 exists to answer -- which context caused the loop -- needs the two
+    attempts to differ in the trace. A constant config would make them indistinguishable."""
+    model = StubModel(text=f"Under [AML Rulebook {CLAUSE}].")
+    monkeypatch.setattr(nodes, "_model", lambda *a, **k: model)
+
+    state = initial_state("x")
+    state["candidates"] = sample_candidates()
+    state.update(nodes.audit_node(state))
+    nodes.draft_node(state)
+
+    state["loop_count"] = 1
+    state["critique"] = "obligation to report linked transfers"
+    state.update(nodes.audit_node(state))
+    nodes.draft_node(state)
+
+    loops = [c["tags"][1] for c in model.configs]
+    assert loops == ["loop:0", "loop:1"]
+
+
+def test_tracing_reports_itself_as_off_without_a_key(monkeypatch):
+    """A trace that is silently not being written is worse than none: you go looking for it
+    after the run instead of before."""
+    from src.graph.graph import tracing_project
+
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+    monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
+    assert tracing_project() is None
+
+    monkeypatch.setenv("LANGCHAIN_API_KEY", "ls-fake")
+    monkeypatch.setenv("LANGCHAIN_PROJECT", "finguard-orchestrator")
+    assert tracing_project() == "finguard-orchestrator"
+
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
+    assert tracing_project() is None

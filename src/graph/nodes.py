@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import re
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from langchain_core.documents import Document
@@ -78,6 +79,35 @@ CROSS_BORDER_TIERS = [1, 2]
 CITATION = re.compile(r"\[([^\[\]\n]{3,160})\](?!\()")
 
 
+def trace_config(state: AgentState, node: str) -> dict[str, Any]:
+    """§7.2's custom metadata and run-tagging, attached to each model call.
+
+    The run-level config set at ``invoke()`` cannot carry any of this: wire and candidate counts
+    do not exist until PARSE and DETECT have run, and ``loop_count`` changes underneath the run.
+    Attaching it per call is what makes the question §7.2 actually poses -- *which context block
+    caused the critic to trigger a loop revision* -- answerable from a trace instead of from a
+    print statement, because the second draft's span carries a different clause count and loop
+    number than the first.
+
+    Costs nothing when tracing is off: LangChain ignores the config unless LANGCHAIN_TRACING_V2
+    is set, so this is inert on a normal run.
+    """
+    candidates = state.get("candidates", []) or []
+    return {
+        "tags": [f"node:{node}", f"loop:{state.get('loop_count', 0)}"],
+        "metadata": {
+            "node": node,
+            "batch": Path(str(state.get("batch_path", ""))).name,
+            "wire_count": len(state.get("wires", []) or []),
+            "candidate_count": len(candidates),
+            "shapes": sorted({c.shape for c in candidates}),
+            "query_count": len(state.get("queries", []) or []),
+            "clause_count": len(state.get("retrieved_context", []) or []),
+            "loop_count": state.get("loop_count", 0),
+        },
+    }
+
+
 def _model(env_var: str, default: str, **kwargs):
     """Bound late so the test suite never needs a key and never reaches the network."""
     from langchain_openai import ChatOpenAI
@@ -101,7 +131,14 @@ def escalate(failure: MalformedMessage) -> Wire | None:
             [
                 ("system", prompts.EXTRACTION_SYSTEM),
                 ("user", prompts.EXTRACTION_USER.format(reason=failure.reason, raw=failure.raw)),
-            ]
+            ],
+            # No state to draw on -- a rescue is per message, not per batch. The reference and
+            # the reason are what make a fallback span searchable at all.
+            config={
+                "tags": ["node:extraction_fallback"],
+                "metadata": {"node": "extraction_fallback", "reference": failure.reference,
+                             "reason": failure.reason},
+            },
         )
         from datetime import date
 
@@ -294,7 +331,8 @@ def draft_node(state: AgentState) -> dict[str, Any]:
                     feedback=feedback,
                 ),
             ),
-        ]
+        ],
+        config=trace_config(state, "draft"), # type: ignore
     )
     return {"compliance_draft": response.content}
 
@@ -349,7 +387,8 @@ def critic_node(state: AgentState) -> dict[str, Any]:
                     draft=draft,
                 ),
             ),
-        ]
+        ],
+        config=trace_config(state, "critic"), # type: ignore
     )
 
     score = verdict.confidence_score # type: ignore
@@ -410,7 +449,8 @@ def generate_node(state: AgentState) -> dict[str, Any]:
                         reservations=reservations,
                     ),
                 ),
-            ]
+            ],
+            config=trace_config(state, "generate"), # type: ignore
         )
     )
 
@@ -426,7 +466,7 @@ def generate_node(state: AgentState) -> dict[str, Any]:
     # came back High recommending a SAR, July (23 laundering) came back Low. High means *file*,
     # so it has to clear the critic's top band, not merely score enough to stop the loop.
     if report.risk_rating == "High" and state.get("confidence_score", 0.0) < HIGH_RISK_CONFIDENCE: # type: ignore
-        report.risk_rating = "Medium"
+        report.risk_rating = "Medium" # type: ignore
 
     known = {wire.reference for wire in state["wires"]} # type: ignore
     flagged = [reference for reference in report.flagged_wires if reference in known] # type: ignore

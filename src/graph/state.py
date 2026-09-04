@@ -61,6 +61,7 @@ class AgentState(TypedDict, total=False):
     # --- audit / critic bookkeeping ---
     queries: list[str]
     critique: str
+    audit_id: str
     reservations: list[str]
     report: "ComplianceReport | None"
 
