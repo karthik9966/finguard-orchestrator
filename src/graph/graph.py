@@ -36,6 +36,7 @@ from src.graph.nodes import (
     route_after_critic,
     route_after_detect,
 )
+from src.graph.cost import UsageLedger
 from src.graph.state import AgentState, initial_state
 from src.utils.swift_parser import existing_log
 
@@ -113,8 +114,14 @@ def run_config(batch_path: str, *, tags: list[str] | None = None,
 def audit_batch(batch_path: str, *, tags: list[str] | None = None,
                 metadata: dict[str, Any] | None = None) -> AgentState:
     config = run_config(batch_path, tags=tags, metadata=metadata)
+    # One ledger per run, registered at the top: LangChain propagates run-level callbacks into
+    # every nested call, so a node added later is accounted for without registering it anywhere.
+    ledger = UsageLedger()
+    config["callbacks"] = [ledger]
+
     state = build_graph().invoke(initial_state(batch_path), config=config) # type: ignore
     state["audit_id"] = config["metadata"]["audit_id"]
+    state["usage"] = ledger
     return state # type: ignore
 
 
@@ -136,6 +143,9 @@ def print_run(state: AgentState) -> None:
           f"from {len(state.get('queries', []))} queries")
     print(f"critic     : {state.get('loop_count', 0)} pass(es), "
           f"confidence {state.get('confidence_score', 0):.2f}")
+    usage = state.get("usage")
+    if usage is not None:
+        print(usage.summary())
 
     if report is None:
         print("\nno report produced")
@@ -187,7 +197,17 @@ def main() -> int:
     print_run(state)
 
     if args.json and state.get("report") is not None:
-        args.json.write_text(json.dumps(state["report"].model_dump(), indent=2)) # type: ignore
+        payload = state["report"].model_dump() # type: ignore
+        payload["audit_id"] = state.get("audit_id")
+        if state.get("usage") is not None:
+            total = state["usage"].total_cost # type: ignore
+            payload["usage"] = {
+                "calls": state["usage"].calls, # type: ignore
+                "total_tokens": state["usage"].total_tokens, # type: ignore
+                "total_cost_usd": float(total) if total is not None else None,
+                "by_node": state["usage"].rows(), # type: ignore
+            }
+        args.json.write_text(json.dumps(payload, indent=2))
         print(f"\nreport -> {args.json}")
     return 0
 

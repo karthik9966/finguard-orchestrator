@@ -366,9 +366,79 @@ Verified against a live project: a May run tagged `VERIFY_B1` produced a root sp
 Costs nothing when tracing is off: LangChain ignores the config unless `LANGCHAIN_TRACING_V2` is
 set, and the whole suite runs with it unset.
 
-**This sends data to a hosted service.** Prompts leave the machine, including the SWIFT payment
-lines inside them. That is fine for the synthetic ledger in this repo and is worth deciding
-deliberately before it is pointed at anything real.
+### What is actually traced, and what that means
+
+Tracing is not scoped to model calls. LangSmith instruments **Runnables**, and LangGraph compiles
+every node into one, so a run of this graph records 16 spans: 3 of type `llm` (the model calls)
+and 13 of type `chain` — including `parse`, `detect` and `audit`, which never reach a model. That
+is the default and the only setting: `LANGCHAIN_TRACING_V2` is all-or-nothing, and the tags above
+are the only part of it this project wrote.
+
+It is genuinely useful — the `audit` span shows retrieval taking ~2s and returning 24 clauses for
+$0.00, which a model-only tracer would not show at all.
+
+**But it means more than prompts leaves the machine.** Every span records its full inputs and
+outputs, so the `parse` node uploads its entire result: a measured 137,261 characters on the
+August batch — all 220 wires with names, account numbers, addresses and amounts, of which only
+~21 ever reach a model. The upload is a consequence of `parse` being a node, not of anything
+being sent to OpenAI.
+
+For the synthetic ledger in this repo that is fine. Before this is pointed at real payment data,
+it is the difference between *"we send a third party our prompts"* and *"we send a third party
+the whole book"*, and the honest options are to leave tracing off in that environment, or to
+trace a redacted projection of the state rather than the wires themselves.
+
+## Cost (§9.1)
+
+Every run prints what it spent, per node, with no flag to enable:
+
+```
+critic     : 2 pass(es), confidence 0.50
+cost       : 5 model call(s), 34,379 tokens
+    draft                2 call(s)   11,736 in   2,716 out     $0.0565   gpt-4o-2024-08-06
+    critic               2 call(s)   13,673 in   1,106 out     $0.0452   gpt-4o-2024-08-06
+    generate             1 call(s)    2,963 in   2,185 out     $0.0293   gpt-4o-2024-08-06
+    TOTAL                $0.1310
+```
+
+Measured, one run each:
+
+| batch | candidates | critic passes | model calls | tokens | cost |
+|---|---|---|---|---|---|
+| a batch with no candidates | 0 | — | **0** | 0 | **$0.0000** |
+| 2023-08 | 6 | 1 | 3 | 16,385 | $0.0624 |
+| 2023-05 | 1 | 2 | 5 | 29,540 | $0.0898 |
+| 2023-06 | 7 | 2 | 5 | 34,379 | $0.1310 |
+| 2023-07 | 16 | 2 | 5 | 45,860 | $0.1784 |
+
+This settles §9.1's `$0.00` vs `$0.12` estimate with numbers. The free path is exactly free — the
+model is never constructed, so nothing is billed — and the agentic path lands near the estimate
+on average while spanning **2.9x** end to end.
+
+**The spread is the finding, and it is not driven by batch size.** All four batches hold 220
+wires. What moves the bill is whether the critic accepts the first draft: a single refinement
+re-runs both `draft` and `critic`, taking a run from 3 calls to 5. August passed first time and
+cost $0.0624; July looped and cost $0.1784. Averaging those into "$0.12 per batch" would hide the
+one variable that actually matters.
+
+Cost is attributed by reading the `node:` tag §7.2 already stamps on each call — one notion of
+"which node was that", not two. It cannot be read off the response: three of the four calls go
+through `with_structured_output`, which returns the parsed Pydantic object and discards the
+`AIMessage` the token counts live on, so a callback watches the raw generation instead.
+
+Prices are a table in `src/graph/cost.py`, in USD per million tokens. A model absent from it is
+reported in tokens with **no dollar figure** rather than being priced off the nearest-looking
+entry — an invented cost is worse than none, because it reads as measured. The same table is
+what to correct when prices move.
+
+### The pre-router is already the cost router (§9.2)
+
+Nothing to build here. `route_after_detect` decides after two free nodes whether the model is
+reached at all, which is §9.2's escalation gate with a predicate that can actually fire. The
+blueprint's own trigger — *"the ledger contains a cross-border wire"* — escalates every batch:
+cross-border is 9.77% of SAML-D, so a 220-wire batch is fully domestic with probability 1.5e-10.
+Routing on `candidates == []` is the version that saves money, and the $0.0000 row above is it
+working.
 
 ## Roadmap
 

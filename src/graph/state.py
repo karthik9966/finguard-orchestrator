@@ -15,6 +15,7 @@ from typing import Any, Literal, TypedDict
 from langchain_core.documents import Document
 from pydantic import BaseModel, Field, field_validator
 
+from src.graph.cost import UsageLedger
 from src.utils.detectors import Candidate
 from src.utils.swift_parser import Wire
 
@@ -62,6 +63,7 @@ class AgentState(TypedDict, total=False):
     queries: list[str]
     critique: str
     audit_id: str
+    usage: UsageLedger | None
     reservations: list[str]
     report: "ComplianceReport | None"
 
