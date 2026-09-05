@@ -23,6 +23,7 @@ from typing import Any
 from langchain_core.documents import Document
 
 from src.graph import prompts
+from src.graph.rerank import rerank
 from src.graph.state import (
     CONFIDENCE_THRESHOLD,
     HIGH_RISK_CONFIDENCE,
@@ -57,6 +58,12 @@ MAX_CONTEXT_CLAUSES = 24
 # constant from the original paper -- it damps the top of each list so a single query's rank-1
 # cannot dominate a clause that several queries agree on.
 RRF_K = 60
+
+# §9.4. Reranking is on by default because it is free -- a 3 MB CPU model beside a gpt-4o call --
+# and measurably better: on ObliQA's 2,786 labelled questions it lifts hit@1 from 45.2% to 55.6%
+# and hit@4 from 65.2% to 72.9%. See src/graph/rerank.py for the full table and the reason each
+# query is reranked against itself rather than against a joined string.
+USE_RERANKER = True
 
 # Seats held for the critic's reformulated query on a loop-back. Without them the refinement is
 # very nearly inert: after seven queries the 24th incumbent already holds an RRF score of
@@ -268,7 +275,10 @@ def audit_node(state: AgentState) -> dict[str, Any]:
     refining = bool(state.get("loop_count", 0)) and bool(state.get("critique"))
     reserved: list[str] = []
     for query in new_queries:
-        for rank, hit in enumerate(retrieve(query, k=RETRIEVE_K, tiers=tiers), start=1):
+        hits = retrieve(query, k=RETRIEVE_K, tiers=tiers)
+        if USE_RERANKER:
+            hits = rerank(query, hits)
+        for rank, hit in enumerate(hits, start=1):
             if refining and rank <= REFINEMENT_RESERVE:
                 reserved.append(hit["chunk_id"])
             document = documents.get(hit["chunk_id"])
@@ -420,6 +430,42 @@ def route_after_critic(state: AgentState) -> str:
 
 # --- 6. GENERATE --------------------------------------------------------------------------
 
+# gpt-4o will emit up to 16,384 output tokens, and a formatting step asked to restate a draft has
+# no business approaching that. Bounding it turns a runaway into a fast failure the fallback can
+# absorb, rather than a minute of billed generation that ends in an exception.
+GENERATE_MAX_TOKENS = 4096
+
+
+def fallback_report(state: AgentState) -> ComplianceReport:
+    """The filing, assembled in Python when the formatting call fails.
+
+    Deliberately conservative on the one field that is a judgement: risk_rating is read off the
+    critic's confidence rather than guessed at, and never reaches High -- a report produced by a
+    fallback path is not the place to assert that a SAR must be filed.
+    """
+    confidence = state.get("confidence_score", 0.0) or 0.0
+    summary = state.get("compliance_draft") or "No draft was produced."
+    if state.get("reservations"):
+        summary += "\n\n### Reservations\n" + "\n".join(
+            f"- {claim}" for claim in state["reservations"] # type: ignore
+        )
+    summary += (
+        "\n\n_This report was assembled from the approved draft after the formatting step "
+        "failed. The analysis is unchanged; only its presentation was not model-written._"
+    )
+    return ComplianceReport(
+        risk_rating="Medium" if confidence >= CONFIDENCE_THRESHOLD else "Low",
+        flagged_wires=[],
+        applicable_regulations=[
+            f"{d.metadata.get('document_title')} {d.metadata.get('section_clause')}"
+            for d in state.get("retrieved_context", []) # type: ignore
+            if str(d.metadata.get("section_clause", "")).rstrip(".") in summary
+        ],
+        audit_summary=summary,
+        source_document_hashes=[],
+    )
+
+
 
 def generate_node(state: AgentState) -> dict[str, Any]:
     citations = "\n".join(
@@ -434,25 +480,36 @@ def generate_node(state: AgentState) -> dict[str, Any]:
             + "\n".join(f"- {claim}" for claim in state["reservations"]) # type: ignore
         )
 
-    report = (
-        _model("AUDIT_MODEL", "gpt-4o")
-        .with_structured_output(ComplianceReport)
-        .invoke(
-            [
-                ("system", prompts.GENERATE_SYSTEM),
-                (
-                    "user",
-                    prompts.GENERATE_USER.format(
-                        batch=state["batch_path"], # type: ignore
-                        draft=state["compliance_draft"], # type: ignore
-                        citations=citations,
-                        reservations=reservations,
+    try:
+        report = (
+            _model("AUDIT_MODEL", "gpt-4o", max_tokens=GENERATE_MAX_TOKENS)
+            .with_structured_output(ComplianceReport)
+            .invoke(
+                [
+                    ("system", prompts.GENERATE_SYSTEM),
+                    (
+                        "user",
+                        prompts.GENERATE_USER.format(
+                            batch=state["batch_path"], # type: ignore
+                            draft=state["compliance_draft"], # type: ignore
+                            citations=citations,
+                            reservations=reservations,
+                        ),
                     ),
-                ),
-            ],
-            config=trace_config(state, "generate"), # type: ignore
+                ],
+                config=trace_config(state, "generate"), # type: ignore
+            )
         )
-    )
+    except Exception:  # noqa: BLE001 -- see below; the specific class is provider-internal
+        # A live June run died here: the model ran to the 16,384-token output ceiling emitting
+        # JSON that never closed, and the whole run was lost *after* four paid calls had already
+        # succeeded. GENERATE_MAX_TOKENS makes that failure cheap; this makes it non-fatal.
+        #
+        # Falling back costs nothing in fidelity because this node was never the analysis. The
+        # draft is the finding, and every evidence field is recomputed below from the ledger and
+        # the retrieved set anyway -- so a Python-built report differs from the model's only in
+        # prose it was told to copy across verbatim.
+        report = fallback_report(state)
 
     # Both evidence fields are repaired from the ledger and the retrieved set rather than trusted
     # as written. A model asked for identifiers reaches for the numbers most present in its

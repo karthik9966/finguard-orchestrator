@@ -35,6 +35,7 @@ dev = [
     # langchain_community.chat_models.vertexai, removed in
     # langchain-community 0.4.x. deepeval covers the three
     # blueprint metrics. Revisit when upstream fixes it.
+    "flashrank>=0.2.10",
 ]
 
 # `uv sync` puts each on PATH. Every target is a
@@ -49,6 +50,14 @@ finguard-map       = "src.ingestion.obliqa_map:main" # ObliQA DocumentIDs -> doc
 finguard-chunk     = "src.ingestion.loader:main"     # semantic chunking -> chunks/*.jsonl
 finguard-benchmark = "src.ingestion.benchmark:main"  # recall@k against the gold set
 finguard-store     = "src.ingestion.store:main"      # build / query the ChromaDB collection
+
+# The eval suite is not part of the default run: its judge is a gpt-4o call per metric per case.
+# `uv run pytest tests/` stays free and needs no key; `-m eval` opts in.
+[tool.pytest.ini_options]
+markers = [
+    "eval: LLM-as-judge scoring (§8). Costs money -- run with `-m eval`.",
+]
+addopts = "-m 'not eval'"
 
 [build-system]
 requires = ["hatchling"]

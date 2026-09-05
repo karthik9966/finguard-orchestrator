@@ -440,6 +440,52 @@ cross-border is 9.77% of SAML-D, so a 220-wire batch is fully domestic with prob
 Routing on `candidates == []` is the version that saves money, and the $0.0000 row above is it
 working.
 
+## Reranking (§9.4)
+
+Retrieval compares a query and a clause *separately*, as vectors computed before either had seen
+the other -- fast enough for 12,273 chunks, and shallow for that reason. A **cross-encoder** reads
+the query and one clause together and scores the pair: far more accurate, far too slow for a whole
+collection, exactly right for the 15 a query already returned.
+
+Measured against ObliQA's 2,786 labelled questions — retrieve 15, then rerank:
+
+| | embedding | + FlashRank | delta |
+|---|---|---|---|
+| hit@1 | 45.2% | **55.6%** | +10.5 |
+| hit@4 | 65.2% | **72.9%** | +7.7 |
+| hit@8 | 73.2% | **77.6%** | +4.4 |
+| hit@15 | 79.2% | 79.2% | **+0.0** |
+
+The last row is the mechanism, not a disappointment: **a reranker reorders, it cannot add.**
+Phase 1's ceiling — 17.2% of questions have no correct clause in the top 15 — is untouched by
+this and by anything short of better retrieval. 40 ms per question on CPU, from a 3 MB model, so
+the cost beside one `gpt-4o` call is nil.
+
+**Each query is reranked against itself, then the reranked lists are fused.** Handing the
+reranker one joined string was measured too, and is worse where it matters: clauses the live
+reports cite fall from rank 3 to 7 and 4 to 12, because a clause answering one of seven questions
+scores poorly against a paragraph containing all seven. Per-query reranking preserves exactly what
+RRF exists for — a list is only ever scored on its own terms.
+
+### The blueprint's 15 → 4 prune is not safe here, and the measurement says so
+
+§9.4 proposes pruning to the top 4 for a ~70% context reduction. On this corpus that would cut
+clauses the reports actually cite. Tracking every clause the four live reports cited, through the
+merge and then the reranker:
+
+| | worst rank any cited clause reaches |
+|---|---|
+| RRF alone *(before this work)* | 32 |
+| RRF + joined-query rerank | 15 |
+| **RRF + per-query rerank** | **17** |
+
+Reranking roughly halves the worst case — a real improvement — but a context of 4 would still
+discard a clause that a live report grounded a finding on. `MAX_CONTEXT_CLAUSES` therefore stays
+at **24**, and the win taken here is ordering quality rather than token savings: the clauses most
+likely to matter now sit at the top of the context instead of scattered through it.
+
+Set `USE_RERANKER = False` in `src/graph/nodes.py` to compare.
+
 ## Roadmap
 
 - [x] Phase 1 — Ingestion & semantic grounding

@@ -77,6 +77,17 @@ class StubModel:
         return value(len(self.calls)) if callable(value) else value
 
 
+@pytest.fixture(autouse=True)
+def reranker_off(monkeypatch):
+    """The suite's promise is that it needs no key and touches no network. §9.4's reranker breaks
+    that on a fresh checkout -- FlashRank downloads a 3 MB model on first use, and it caches to
+    /tmp, so a machine that has run the pipeline once hides the dependency until CI finds it.
+
+    These tests are about the merge, not about what the reranker thinks, so identity is the right
+    stand-in. tests/test_rerank.py exercises the real thing and skips when it is unavailable."""
+    monkeypatch.setattr(nodes, "rerank", lambda query, hits: hits)
+
+
 @pytest.fixture
 def stub_retrieval(monkeypatch):
     """One clause for every query, so the audit node can be exercised without the vector store."""
@@ -597,6 +608,55 @@ def test_a_clean_batch_never_reaches_a_model(monkeypatch):
     assert state["report"].risk_rating == "Low"
     assert state["report"].flagged_wires == []
     assert state["loop_count"] == 0
+
+def test_a_runaway_formatting_call_does_not_lose_the_whole_run(monkeypatch):
+    """A live June run died here: gpt-4o ran to its 16,384-token output ceiling emitting JSON
+    that never closed, after four paid calls had already succeeded. The draft is the finding;
+    losing it because the formatting step failed is the wrong trade."""
+    class Exploding:
+        # Returns itself from with_structured_output: the real failure happens *inside* the
+        # structured call, which is the path being tested.
+        def with_structured_output(self, schema):
+            return self
+
+        def invoke(self, messages, config=None):
+            raise ValueError("Could not parse response content as the length limit was reached")
+
+    monkeypatch.setattr(nodes, "_model", lambda *a, **k: Exploding())
+    state = initial_state("x")
+    state["retrieved_context"] = [clause_doc()]
+    state["compliance_draft"] = f"Findings under [AML Rulebook {CLAUSE}]."
+    state["wires"] = []
+    state["candidates"] = []
+    state["confidence_score"] = 1.0
+    state["is_audit_complete"] = True
+
+    report = nodes.generate_node(state)["report"]
+    assert report is not None, "a failed format must not end the run"
+    assert f"[AML Rulebook {CLAUSE}]" in report.audit_summary, "the analysis survives"
+    assert report.source_document_hashes == [CHUNK_ID], "evidence is still derived, not lost"
+
+
+def test_the_fallback_never_asserts_high_risk():
+    """High means file a SAR. A path taken because something failed is not where that is decided."""
+    state = initial_state("x")
+    state["retrieved_context"] = [clause_doc()]
+    state["compliance_draft"] = f"Grave findings under [AML Rulebook {CLAUSE}]."
+    state["confidence_score"] = 1.0
+    assert nodes.fallback_report(state).risk_rating == "Medium"
+
+    state["confidence_score"] = 0.5
+    assert nodes.fallback_report(state).risk_rating == "Low"
+
+
+def test_the_fallback_says_it_was_a_fallback():
+    """An auditor reading the filing must be able to tell the prose was not model-written."""
+    state = initial_state("x")
+    state["retrieved_context"] = []
+    state["compliance_draft"] = "Findings."
+    summary = nodes.fallback_report(state).audit_summary
+    assert "formatting step failed" in summary
+
 
 # --- 7. tracing (§7) ------------------------------------------------------------------------
 
