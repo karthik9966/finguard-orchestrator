@@ -16,9 +16,14 @@
 # source, and mounting it means re-indexing the corpus does not mean rebuilding the image:
 #
 #   docker run -p 8000:8000 \
-#     -v "$PWD/chroma_db:/app/chroma_db:ro" \
+#     -v "$PWD/chroma_db:/app/chroma_db" \
 #     -e OPENAI_API_KEY=sk-... \
 #     finguard
+#
+# The mount is deliberately NOT :ro. ChromaDB is SQLite underneath, and SQLite opens a journal
+# even to read -- a read-only mount fails with "attempt to write a readonly database" and the
+# health probe correctly refuses to serve. The container runs as uid 1000, so the host directory
+# has to be writable by it.
 
 # --- builder ----------------------------------------------------------------------------
 FROM python:3.11-slim AS builder
@@ -35,14 +40,28 @@ ENV UV_COMPILE_BYTECODE=1 \
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-# Replace the CUDA torch the default index resolves to. Done after sync rather than pinned in
-# pyproject.toml because the CPU index is a deployment decision -- developers on macOS already
-# get a CPU build, and forcing the index in the project file would break anyone with a GPU.
-RUN uv pip install --python /app/.venv \
-        --index-url https://download.pytorch.org/whl/cpu torch
-
 COPY src ./src
 RUN uv sync --frozen --no-dev
+
+# Swap the CUDA torch that the lockfile resolves to for the CPU build: ~200 MB against 517 MB
+# plus roughly a gigabyte of nvidia-* CUDA runtime, none of which a CPU service can use.
+#
+# Three ordering rules, each learned from a failed build:
+#   * it must come AFTER the last `uv sync`, or the sync restores the locked CUDA build and the
+#     override is silently undone (the layer log showed nvidia-cusparselt going back in);
+#   * torch must be UNINSTALLED first, because the CPU and CUDA wheels carry the same version
+#     number -- `uv pip install` sees the requirement already satisfied and does nothing;
+#   * the nvidia-* packages must go in the same step, not after. Removed once torch is already
+#     importing them, the next import dies on `libcublasLt.so not found`.
+#
+# Not pinned in pyproject.toml because the cpu index is a deployment decision: developers on
+# macOS already get a CPU build, and forcing the index there would break anyone with a GPU.
+RUN . /app/.venv/bin/activate && \
+    CUDA_PKGS="$(uv pip list --python /app/.venv | awk '/^nvidia-|^triton /{print $1}')" && \
+    uv pip uninstall --python /app/.venv torch $CUDA_PKGS && \
+    uv pip install --python /app/.venv \
+        --index-url https://download.pytorch.org/whl/cpu torch && \
+    /app/.venv/bin/python -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
 
 # Bake the models. Both go to well-known caches that the runner stage copies wholesale.
 ENV HF_HOME=/opt/models/hf
@@ -68,11 +87,16 @@ COPY --from=builder --chown=finguard:finguard /opt/models /opt/models
 COPY --chown=finguard:finguard src ./src
 COPY --chown=finguard:finguard pyproject.toml README.md ./
 
+# A writable home for the two things that are written at runtime. /app is root-owned and the
+# service is uid 1000, so both have to point somewhere else or the first flush is a PermissionError.
+RUN mkdir -p /var/cache/finguard && chown finguard:finguard /var/cache/finguard
+
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     HF_HOME=/opt/models/hf \
     HF_HUB_OFFLINE=1 \
-    CHROMA_PERSIST_DIR=/app/chroma_db
+    CHROMA_PERSIST_DIR=/app/chroma_db \
+    EMBEDDING_CACHE_DIR=/var/cache/finguard/embeddings
 
 USER finguard
 EXPOSE 8000

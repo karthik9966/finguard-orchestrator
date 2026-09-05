@@ -669,19 +669,57 @@ deliberately:
   `HF_HUB_OFFLINE=1` in the runner. A container that fetches a model on first use is one whose
   first audit fails behind a firewall.
 
-`chroma_db` is **not** copied. It is an artefact of `finguard-store`, not source, so it mounts:
+`chroma_db` is **not** copied. It is an artefact of `finguard-store`, not source, so it mounts —
+and deliberately **not** read-only: ChromaDB is SQLite underneath and opens a journal even to
+read, so `:ro` fails with *"attempt to write a readonly database"*.
 
 ```bash
 docker build -t finguard .
-docker run -p 8000:8000 -v "$PWD/chroma_db:/app/chroma_db:ro" -e OPENAI_API_KEY=sk-... finguard
+docker run -p 8000:8000 -v "$PWD/chroma_db:/app/chroma_db" -e OPENAI_API_KEY=sk-... finguard
 ```
 
 `.dockerignore` takes the build context from **1.7 GB to 2.4 MB** — `.venv` and `data/` alone
 would otherwise be uploaded to the daemon on every build.
 
-**Unverified: Docker is not installed on the development machine, so this has never been built.**
-The expected image is ~1.2 GB and that figure is an estimate, not a measurement. Build it and
-replace this paragraph with `docker images finguard`'s actual output.
+### Measured, not estimated
+
+**Image: 3.13 GB.** An earlier draft of this README predicted ~1.2 GB; that estimate was wrong by
+2.6x and is corrected here rather than quietly dropped. Where it actually goes:
+
+| | |
+|---|---|
+| `torch` (CPU build) | **656 MB** — the Linux CPU wheel, not the ~200 MB guessed from macOS |
+| `pyarrow` · `scipy` · `transformers` | 140 · 122 · 114 MB |
+| `kubernetes` · `sympy` · `pandas` · `sklearn` | 84 · 80 · 79 · 59 MB |
+| baked models (MiniLM + TinyBERT) | 93 MB |
+| **`.venv` total** | **2.1 GB** |
+
+The CPU swap still earns its place — it removes roughly a gigabyte of `nvidia-*` CUDA runtime the
+lockfile otherwise resolves, verified by the build printing `torch 2.14.0+cpu cuda None`. Getting
+below ~2 GB would mean an image that does not embed locally at all, which changes retrieval
+behaviour from what every measurement here was taken against.
+
+Verified running, with the corpus mounted:
+
+```
+GET  /health   → {"status":"ok","vectors":12273,"backend":"minilm"}
+POST /audit    → 202, 220 wires
+GET  /audit/…  → complete after ~40s
+               → risk Medium · confidence 0.50 · 5 calls · $0.0935
+```
+
+### Three defects the first real build found
+
+Worth recording, because each was invisible to the test suite and to every local run:
+
+1. **`flashrank` was declared a dev dependency** but `nodes.py` imports it at module scope with
+   `USE_RERANKER` on. Any `--no-dev` install died at import. Moved to runtime dependencies.
+2. **The CPU-torch swap was silently undone.** It ran before the final `uv sync`, which restored
+   the locked CUDA build. It also needs an explicit uninstall first — the CPU and CUDA wheels
+   share a version number, so `uv pip install` sees the requirement satisfied and does nothing.
+3. **The embedding cache could not be written.** It hard-coded `PROJECT_ROOT/data/...`, which the
+   non-root container user cannot create. Now `EMBEDDING_CACHE_DIR`, following the same pattern
+   `CHROMA_PERSIST_DIR` already used.
 
 ## Roadmap
 
@@ -707,7 +745,7 @@ replace this paragraph with `docker images finguard`'s actual output.
   - [x] §6.4 Auditor's citations drawer, resolved via `store.by_id()`
   - [x] §6.5 Telemetry — per-node cost and latency
   - [x] §10 FastAPI service — verified end to end
-  - [ ] §10 Docker image — written, **never built** (no Docker on the dev machine)
+  - [x] §10 Docker image — built and verified: 3.13 GB, full audit inside the container
 
 **§9.3 skipped by decision.** The blueprint caches the auditor's free-text query; Decision 3
 replaced that with fixed templates, so there is no query to cache and the retrieval it would

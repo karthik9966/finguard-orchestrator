@@ -727,6 +727,7 @@ source = { editable = "." }
 dependencies = [
     { name = "chromadb" },
     { name = "fastapi" },
+    { name = "flashrank" },
     { name = "fpdf2" },
     { name = "httpx" },
     { name = "kagglehub" },
@@ -749,7 +750,6 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "deepeval" },
-    { name = "flashrank" },
     { name = "grandalf" },
     { name = "pytest" },
 ]
@@ -758,6 +758,7 @@ dev = [
 requires-dist = [
     { name = "chromadb" },
     { name = "fastapi" },
+    { name = "flashrank", specifier = ">=0.2.10" },
     { name = "fpdf2" },
     { name = "httpx" },
     { name = "kagglehub" },
@@ -779,7 +780,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "deepeval" },
-    { name = "flashrank", specifier = ">=0.2.10" },
     { name = "grandalf" },
     { name = "pytest" },
 ]

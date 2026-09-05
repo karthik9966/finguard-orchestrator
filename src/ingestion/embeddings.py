@@ -29,7 +29,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # override=False: a real exported variable always beats the file.
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 
-CACHE_DIR = PROJECT_ROOT / "data" / "processed" / ".embedding_cache"
+# Overridable for the same reason CHROMA_PERSIST_DIR is: in a container the source tree is owned
+# by root and the service runs as uid 1000, so a cache that insists on living under the project
+# root fails with PermissionError the first time it flushes -- which is exactly how the first
+# containerised audit died, several minutes and one paid call in.
+CACHE_DIR = Path(
+    os.environ.get("EMBEDDING_CACHE_DIR", PROJECT_ROOT / "data" / "processed" / ".embedding_cache")
+)
 
 MINILM_MODEL = "all-MiniLM-L6-v2"
 OPENAI_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
