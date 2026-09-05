@@ -261,10 +261,19 @@ def audit_node(state: AgentState) -> dict[str, Any]:
     clause the first pass already found is reinforced rather than re-scored from scratch.
     """
     queries = list(state.get("queries", []))
+    seeded: list[str] = []
     if state.get("loop_count", 0) and state.get("critique"):
         new_queries = [state["critique"]] # type: ignore
     else:
         new_queries = []
+        # §6.2's command bar. The auditor's own words are asked *alongside* the templates, never
+        # instead of them: Decision 3 measured that an obligation-shaped template ranks the
+        # correct clause 5th where a free-text description of the same facts ranks it 315th. So
+        # this widens the search, and the templates keep the floor.
+        auditor_query = str(state.get("auditor_query", "")).strip()
+        if auditor_query:
+            new_queries.append(auditor_query)
+            seeded.append(auditor_query)
         for candidate in state["candidates"]: # type: ignore
             for query in prompts.obligation_queries(candidate):
                 if query not in new_queries:
@@ -278,8 +287,12 @@ def audit_node(state: AgentState) -> dict[str, Any]:
         hits = retrieve(query, k=RETRIEVE_K, tiers=tiers)
         if USE_RERANKER:
             hits = rerank(query, hits)
+        # The auditor's own question gets seats for the same reason the critic's does: a single
+        # list cannot out-score seven fused ones, so a query that is never seated is a query that
+        # changes nothing.
+        holds_seats = (refining and query == state.get("critique")) or query in seeded
         for rank, hit in enumerate(hits, start=1):
-            if refining and rank <= REFINEMENT_RESERVE:
+            if holds_seats and rank <= REFINEMENT_RESERVE:
                 reserved.append(hit["chunk_id"])
             document = documents.get(hit["chunk_id"])
             if document is None:

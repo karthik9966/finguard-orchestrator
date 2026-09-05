@@ -728,3 +728,90 @@ def test_tracing_reports_itself_as_off_without_a_key(monkeypatch):
 
     monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
     assert tracing_project() is None
+
+# --- 8. the cockpit's seams (§6) ------------------------------------------------------------
+
+
+def test_the_auditors_question_is_asked_alongside_the_templates_not_instead(stub_retrieval):
+    """§6.2's command bar. Decision 3 measured a template ranking the right clause 5th where a
+    free-text description ranked it 315th, so the typed question widens the search and the
+    templates keep the floor."""
+    state = initial_state("x")
+    state["candidates"] = sample_candidates()
+    state["auditor_query"] = "  obligation to report cash structured below a threshold  "
+
+    queries = nodes.audit_node(state)["queries"]
+    assert queries[0] == "obligation to report cash structured below a threshold", "asked first"
+    assert len(queries) > 1, "the templates still run"
+    assert all(q in queries for q in prompts.obligation_queries(sample_candidates()[0]))
+
+
+def test_a_blank_command_bar_changes_nothing(stub_retrieval):
+    state = initial_state("x")
+    state["candidates"] = sample_candidates()
+    state["auditor_query"] = "   "
+    assert nodes.audit_node(state)["queries"] == [
+        q for c in sample_candidates() for q in prompts.obligation_queries(c)
+    ]
+
+
+def test_the_auditors_question_gets_seats_it_could_not_win_on_score(monkeypatch):
+    """One free-text list cannot out-score seven fused ones. A command bar whose results never
+    reach the context is a text box that does nothing, which is worse than not having one."""
+    typed = [{"chunk_id": f"typed:{i}", "text": "t", "distance": 0.45,
+              "section_clause": f"9.{i}", "document_title": "AML Rulebook", "relevance_tier": 1}
+             for i in range(nodes.RETRIEVE_K)]
+    template = [{"chunk_id": f"tmpl:{i}", "text": "t", "distance": 0.10,
+                 "section_clause": f"1.{i}", "document_title": "COBS", "relevance_tier": 1}
+                for i in range(nodes.RETRIEVE_K)]
+    answers = iter([typed, template, template])
+    monkeypatch.setattr(nodes, "retrieve", lambda query, **kw: next(answers))
+
+    state = initial_state("x")
+    state["candidates"] = sample_candidates()
+    state["auditor_query"] = "obligation to report linked transfers"
+
+    held = [d.metadata["chunk_id"] for d in nodes.audit_node(state)["retrieved_context"]]
+    # At least the reserve, and those seats are at the front. More than the reserve is fine and
+    # expected -- the typed query's remaining hits still compete on RRF like anyone else's, and
+    # with three queries sharing 24 slots several of them win on merit.
+    assert held[: nodes.REFINEMENT_RESERVE] == [f"typed:{i}" for i in range(nodes.REFINEMENT_RESERVE)]
+    assert sum(1 for c in held if c.startswith("typed:")) >= nodes.REFINEMENT_RESERVE
+    assert any(c.startswith("tmpl:") for c in held), "the templates are not crowded out"
+
+
+def test_streaming_yields_each_node_then_the_assembled_state(monkeypatch, stub_retrieval):
+    """§6.2's tracker needs nodes as they finish. LangGraph streams *deltas*, never the running
+    state, so the generator assembles it -- otherwise every consumer would have to."""
+    from src.graph.graph import stream_batch
+
+    report = ComplianceReport(
+        risk_rating="Medium", flagged_wires=["FGO1"], applicable_regulations=[],
+        audit_summary="## Findings", source_document_hashes=[],
+    )
+    grounded = prompts.Critique(confidence_score=0.9, unsupported_claims=[], reasoning="ok")
+    queued = [grounded]
+
+    def structured(call_index):
+        return queued.pop(0) if queued else report
+
+    monkeypatch.setattr(nodes, "_model", lambda *a, **k: StubModel(
+        text=f"Under [AML Rulebook {CLAUSE}].", structured=structured,
+    ))
+
+    seen = list(stream_batch(str(BATCH)))
+    nodes_seen = [name for name, _ in seen]
+
+    assert nodes_seen[0] == "parse" and nodes_seen[-1] == "__final__"
+    assert nodes_seen[1:4] == ["detect", "audit", "draft"]
+
+    final = seen[-1][1]
+    assert final["report"] is not None, "the last yield carries the assembled state"
+    assert final["audit_id"].startswith("aud-")
+    assert final["usage"] is not None, "the cost ledger survives streaming"
+
+
+test_streaming_yields_each_node_then_the_assembled_state = needs_ledger(
+    test_streaming_yields_each_node_then_the_assembled_state
+)
+

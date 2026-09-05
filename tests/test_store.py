@@ -140,6 +140,40 @@ def test_collection_records_the_backend_that_built_it(isolated):
     assert payload["built"]
 
 
+# --- by_id: the citations drawer's lookup (§6.4) ---------------------------------------
+
+
+def test_a_citation_resolves_to_the_clause_it_was_grounded_in(isolated):
+    """§6.4 exists to make every flag traceable. `generate_node` derives
+    source_document_hashes from the retrieved set in Python, so the drawer must fetch *those*
+    chunks -- re-searching could surface a different clause than the report actually used."""
+    store.build("minilm")
+    found = store.by_id([CHUNKS[0]["chunk_id"]])
+    assert list(found) == [CHUNKS[0]["chunk_id"]]
+    entry = found[CHUNKS[0]["chunk_id"]]
+    assert entry["text"] == CHUNKS[0]["text"]
+    assert entry["section_clause"] and entry["document_title"]
+
+
+def test_an_unknown_citation_is_absent_rather_than_faked(isolated):
+    """The drawer says a citation could not be resolved. A blank card claiming to be a clause
+    would be the exact hallucination §6.4 exists to prevent."""
+    store.build("minilm")
+    found = store.by_id([CHUNKS[0]["chunk_id"], "obliqa:1:invented:00000000"])
+    assert list(found) == [CHUNKS[0]["chunk_id"]]
+
+
+def test_by_id_needs_no_collection_when_asked_for_nothing():
+    assert store.by_id([]) == {}
+
+
+def test_repeated_ids_are_fetched_once(isolated):
+    """A report may cite the same clause for several candidates."""
+    store.build("minilm")
+    cid = CHUNKS[0]["chunk_id"]
+    assert list(store.by_id([cid, cid, cid])) == [cid]
+
+
 # --- retrieve ------------------------------------------------------------------------
 
 

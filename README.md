@@ -554,6 +554,135 @@ No LLM judge catches this — each report is individually plausible and internal
 only the answer key knows better. It is written as a failing test rather than a paragraph, so it
 stays visible until the rating is calibrated.
 
+## Auditor cockpit (§6)
+
+```bash
+uv run streamlit run src/ui/cockpit.py
+```
+
+Upload an MT103 batch in the sidebar, press **Run audit**. Five sections, all of them backed by
+something the engine already measures rather than by a mock.
+
+**Ingestion gate (§6.1)** — vector-store stats and the active rule inventory, so a citation can be
+checked against a known corpus. The uploaded batch is parsed *before* the button is offered: a
+file that yields no wires is rejected in the sidebar, for free, rather than three nodes into a
+paid run.
+
+**Reasoning tracker (§6.2)** — each node reports as it finishes, with its wall time, driven by
+`stream_batch()`. §6.2 sketches four steps; the graph runs seven nodes, and the tracker narrates
+the seven that actually execute. A measured run:
+
+```
+parse           0.4s      detect          0.0s      audit          22.0s
+draft          11.3s      critic          2.0s      generate       11.3s
+```
+
+The slowest node is the **free** one. `audit` spends 22s embedding 8 queries and reranking 120
+clauses locally, and bills nothing — which is only visible because the tracker times every node
+rather than only the paid ones.
+
+**Command bar (§6.2)** — the blueprint puts a free-text instruction box here, and Decision 3
+removed free-text queries because a template ranks the correct clause 5th where a narrative of
+the same facts ranks it 315th. Resolved by asking the auditor's question *alongside* the
+templates, not instead of them: it becomes an extra retrieval query holding the same reserved
+seats the critic's refinement uses, so it genuinely reaches the context without displacing the
+phrasing that measures better.
+
+It earns its place. Running June with *"obligation to report transfers structured below a
+reporting threshold"* typed in:
+
+| | templates only | + command bar |
+|---|---|---|
+| critic passes | 2 | **1** |
+| confidence | 0.50 | **0.75** |
+| cost | $0.1364 | **$0.0820** |
+
+One well-phrased question found the grounding the refinement loop was otherwise paying an extra
+draft-and-critic round to reach.
+
+**Compliance report (§6.3)** — colour-coded risk badge, the flagged wires joined back to their
+parsed records, and the narrative. The badge shows **the critic's confidence beside the rating**,
+deliberately: the rating alone does not yet separate a clean batch from a dirty one, so
+presenting it as a lone verdict would overstate what it knows.
+
+**Citations drawer (§6.4)** — an expander per `source_document_hashes` entry, resolved through
+`store.by_id()` to the exact stored chunk. Not re-searched: `generate_node` derives those ids in
+Python from the retrieved set, so the drawer shows the text the model actually saw rather than
+whatever a fresh query would surface today. Verified on June — 2 of 2 citations resolve.
+
+**Telemetry (§6.5)** — per-node cost from the `UsageLedger`, per-node latency from the stream,
+tokens, and the audit_id. §6.5's "Semantic Cache Monitor" has nothing behind it since §9.3 was
+skipped, so that tile is the free/paid path indicator instead — the cost fact we do measure.
+
+### The Streamlit trap this is built around
+
+Streamlit re-executes the entire script on every widget interaction, and an audit costs
+$0.06–$0.18. So the run fires **only** from the button, and the finished state lives in
+`st.session_state` keyed by the batch bytes plus the typed query. Toggling telemetry, opening a
+citation or expanding the rule inventory reads that state and bills nothing; changing the batch
+or the question says so and waits for the button.
+
+## Service & container (§10)
+
+```bash
+uv run uvicorn src.api.main:app --reload
+```
+
+| endpoint | |
+|---|---|
+| `POST /audit` | multipart batch upload → **202** with an `audit_id`, audited in the background |
+| `GET /audit/{id}` | status, and the `ComplianceReport` once finished |
+| `GET /audits` | everything this process has run, report bodies omitted |
+| `GET /health` | **503** unless the collection is actually queryable |
+
+An audit takes 30-60s and costs $0.06–$0.18, which is why it is not synchronous: a held
+connection for a minute is a timeout waiting for a proxy to find it. The batch is still parsed
+*during* the request, so a bad upload is a 400 in a second rather than a background task that
+fails a minute later for a reason the caller must poll to discover.
+
+Verified end to end against the May batch:
+
+```
+POST /audit    → 202 {"audit_id":"aud-6598a61d0f88","wires":220,"poll":"/audit/aud-6598a61d0f88"}
+GET  /audit/…  → running · running · running · complete   (~40s)
+               → risk Medium · confidence 0.50 · 5 calls · $0.0956
+```
+
+The `audit_id` is the one `run_config()` already mints for tracing, reused as the resource id —
+so a LangSmith trace and an API result are the same run rather than two id schemes to join.
+
+**Two honest caveats.** §10 specifies `graph.ainvoke`, and the nodes are *synchronous*, so it
+hands them to a threadpool rather than yielding on I/O. Correct, does not block the event loop,
+and not the same thing as async nodes. And the audit registry is an in-process dict: right for
+one instance, wrong for two, since a second worker would not see the first one's audits. Redis or
+Postgres is the fix if this is ever scaled out.
+
+### Docker
+
+Multi-stage, `uv` rather than `pip`, with the two things that dominate the image handled
+deliberately:
+
+- **CPU-only torch.** `sentence-transformers` pulls torch for the local MiniLM embeddings, and
+  the default Linux wheel bundles CUDA — dead weight in a CPU service. The cpu index is roughly
+  200 MB against 517 MB.
+- **Models baked in.** MiniLM and FlashRank's TinyBERT are downloaded at build time, with
+  `HF_HUB_OFFLINE=1` in the runner. A container that fetches a model on first use is one whose
+  first audit fails behind a firewall.
+
+`chroma_db` is **not** copied. It is an artefact of `finguard-store`, not source, so it mounts:
+
+```bash
+docker build -t finguard .
+docker run -p 8000:8000 -v "$PWD/chroma_db:/app/chroma_db:ro" -e OPENAI_API_KEY=sk-... finguard
+```
+
+`.dockerignore` takes the build context from **1.7 GB to 2.4 MB** — `.venv` and `data/` alone
+would otherwise be uploaded to the daemon on every build.
+
+**Unverified: Docker is not installed on the development machine, so this has never been built.**
+The expected image is ~1.2 GB and that figure is an estimate, not a measurement. Build it and
+replace this paragraph with `docker images finguard`'s actual output.
+
 ## Roadmap
 
 - [x] Phase 1 — Ingestion & semantic grounding
@@ -566,5 +695,23 @@ stays visible until the rating is calibrated.
   - [x] §4.2 Extraction & AML Audit nodes wired with LangGraph
   - [x] §4.2 Auditor Critic node with refinement loops back to ChromaDB
   - [x] §4.2 Fallback routes — malformed message, unreadable batch, empty retrieval
-- [ ] Phase 3 — Observability, evals, cost optimization
-- [ ] Phase 4 — Streamlit cockpit & Docker packaging
+- [x] Phase 3 — Observability, evals, cost optimization
+  - [x] §7 LangSmith tracing, run-tagging & custom metadata
+  - [x] §8 DeepEval harness — Faithfulness, Relevancy, Context Precision
+  - [x] §9.2 Hierarchical cost pre-router (already `route_after_detect`), now measured
+  - [x] §9.4 FlashRank reranking — adopted; the 15→4 prune measured unsafe and rejected
+  - [ ] §9.3 Redis semantic cache — **deliberately skipped**, see below
+- [x] Phase 4 — Streamlit cockpit & Docker packaging
+  - [x] §5.1 Pydantic output schema (pulled forward into Phase 2, enforced in `generate_node`)
+  - [x] §6.1–6.2 Ingestion sidebar & active audit workspace
+  - [x] §6.4 Auditor's citations drawer, resolved via `store.by_id()`
+  - [x] §6.5 Telemetry — per-node cost and latency
+  - [x] §10 FastAPI service — verified end to end
+  - [ ] §10 Docker image — written, **never built** (no Docker on the dev machine)
+
+**§9.3 skipped by decision.** The blueprint caches the auditor's free-text query; Decision 3
+replaced that with fixed templates, so there is no query to cache and the retrieval it would
+protect is a local ChromaDB lookup that is already free. Keyed on candidate geometry it would
+work, but B2 measured a batch at $0.06–$0.18 and this project runs four of them — the saving is
+an architecture demonstration, not an economy. Revisit at a volume where recurring geometry is
+common.

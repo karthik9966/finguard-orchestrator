@@ -1,0 +1,27 @@
+# Everything the build does not need. .venv and data/raw alone are ~2 GB of context that would
+# otherwise be uploaded to the daemon on every build.
+.venv/
+.git/
+.github/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.deepeval/
+.claude/
+.agents/
+
+# Data is mounted or regenerated, never baked in.
+data/
+chroma_db/
+docs/
+
+# Secrets never enter an image layer.
+.env
+.env.*
+!.env.example
+
+# Local noise
+*.log
+.DS_Store

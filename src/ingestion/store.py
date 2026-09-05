@@ -130,6 +130,33 @@ def build(backend_name: str = "minilm", *, rebuild: bool = False) -> dict:
     return stats()
 
 
+def by_id(chunk_ids: list[str]) -> dict[str, dict]:
+    """Fetch stored chunks by id -- the lookup §6.4's citations drawer needs.
+
+    ``retrieve`` searches by vector and is the wrong tool here: the drawer already knows exactly
+    which clauses to show, because ``generate_node`` derived ``source_document_hashes`` from the
+    retrieved set in Python rather than trusting the model to report them. Re-searching would
+    risk returning a *different* clause than the one the report was actually grounded in, which
+    defeats the entire purpose of an audit trail.
+
+    Returned as a dict keyed by chunk_id so a caller can render citations in the report's own
+    order. Ids that are not in the collection are simply absent -- the caller decides whether a
+    missing citation is worth shouting about, and the drawer says so plainly rather than
+    rendering an empty card.
+    """
+    if not chunk_ids:
+        return {}
+
+    collection = _client().get_collection(COLLECTION_NAME)
+    found = collection.get(ids=list(dict.fromkeys(chunk_ids)), include=["documents", "metadatas"])
+    return {
+        cid: {"chunk_id": cid, "text": doc, **(meta or {})}
+        for cid, doc, meta in zip(
+            found["ids"], found["documents"] or [], found["metadatas"] or [] # type: ignore
+        )
+    }
+
+
 def retrieve(
     query: str,
     *,

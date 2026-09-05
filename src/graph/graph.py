@@ -19,6 +19,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Any
 from uuid import uuid4
 
@@ -123,6 +124,37 @@ def audit_batch(batch_path: str, *, tags: list[str] | None = None,
     state["audit_id"] = config["metadata"]["audit_id"]
     state["usage"] = ledger
     return state # type: ignore
+
+
+def stream_batch(batch_path: str, *, auditor_query: str = "", tags: list[str] | None = None,
+                 metadata: dict[str, Any] | None = None) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Run a batch, yielding ``(node_name, update)`` as each node finishes.
+
+    ``audit_batch`` returns only when the whole run is done, which is right for a CLI and wrong
+    for §6.2's reasoning tracker -- a cockpit driven by it shows a spinner for forty seconds and
+    then everything at once, which tells an auditor nothing about *where* the time and money go.
+
+    The final element is ``("__final__", state)``: LangGraph's update stream yields each node's
+    *delta*, never the accumulated state, so a consumer that only wants the report would
+    otherwise have to reassemble it. The ledger and audit_id are attached there, exactly as
+    ``audit_batch`` attaches them.
+    """
+    config = run_config(batch_path, tags=tags, metadata=metadata)
+    ledger = UsageLedger()
+    config["callbacks"] = [ledger]
+
+    state: dict[str, Any] = dict(initial_state(batch_path))
+    if auditor_query.strip():
+        state["auditor_query"] = auditor_query.strip()
+
+    for step in build_graph().stream(state, config=config, stream_mode="updates"): # type: ignore
+        for node, update in step.items():
+            state.update(update)
+            yield node, update
+
+    state["audit_id"] = config["metadata"]["audit_id"]
+    state["usage"] = ledger
+    yield "__final__", state
 
 
 def print_run(state: AgentState) -> None:
