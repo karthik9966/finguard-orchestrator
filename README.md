@@ -486,6 +486,74 @@ likely to matter now sit at the top of the context instead of scattered through 
 
 Set `USE_RERANKER = False` in `src/graph/nodes.py` to compare.
 
+## Evaluations (§8)
+
+The other 190 tests check things that have a right answer. **None of them can tell you whether a
+report is any good** — "is this finding well reasoned?" has no assertable answer, so until this
+suite existed, rewording a prompt was judged by reading one report and forming an impression.
+
+```bash
+uv run python -m src.graph.evalset                    # capture runs   (~$0.13/batch)
+uv run pytest tests/eval_suite.py -m eval             # score them     (~$0.05/judgement)
+```
+
+Not in the default run. `uv run pytest tests/` stays free and key-less; `-m eval` opts in.
+
+Three metrics, each isolating a different failure:
+
+| metric | question | catches |
+|---|---|---|
+| **Faithfulness** | does every claim rest on the retrieved clauses? | hallucination |
+| **Answer Relevancy** | does the report answer what was asked? | drift |
+| **Contextual Precision** | did retrieval rank the useful clauses above the noise? | a *retrieval* problem masquerading as a writing problem |
+
+The third matters most: it separates "the model wrote badly" from "the model never received the
+right law". Those need opposite fixes and are indistinguishable from the output alone.
+
+### Two deliberate departures from the blueprint
+
+**The gold set is real, not invented.** §8.2's example is a hand-written paragraph about a
+fictional `TXN-093` citing `FINRA Rule 3310(a)` — a rule that cannot be grounded here at all,
+since Phase 1 established FINRA publishes no rule PDFs. Instead each case is a real captured run
+scored against `ledger_labels.csv`, which records every planted wire and its typology. June's
+reference answer is *"21 laundering wires out of 220: 10 exhibiting structuring, 8 smurfing, 3
+deposit-send"* — ground truth, not a guess.
+
+**Capture is separate from scoring**, because they cost different money and fail for different
+reasons. Freezing runs to `eval_cases.json` means a prompt change is scored against the *same*
+evidence before and after, rather than two runs that also happened to retrieve different clauses.
+
+### Baseline (partial)
+
+| batch | Faithfulness | Relevancy | Ctx Precision |
+|---|---|---|---|
+| 2023-05 | 1.000 | 0.947 | not scored |
+| 2023-06 | 1.000 | 1.000 | 0.697 ✗ |
+| 2023-07 | 1.000 | not scored | 0.558 ✗ |
+| 2023-08 | 1.000 | not scored | not scored |
+| threshold | 0.85 | 0.80 | 0.70 |
+
+**Faithfulness is 1.000 on every batch scored** — the reports invent nothing. That is the
+citation veto and the Python-derived evidence fields doing their job, now measured rather than
+asserted.
+
+**Contextual Precision is the weak metric**, and it agrees with what B3 found independently: the
+useful clauses are not reliably at the top of the 24. July is worst at 0.558, and July is also
+the batch with the most candidates (16) competing for the same context budget.
+
+Blank cells are not failures — the OpenAI account ran out of credits mid-run. The suite now
+detects `credit_balance_exhausted` and **skips** rather than recording a quality regression that
+never happened.
+
+### The defect the judges cannot see
+
+`test_a_clean_batch_is_not_reported_as_a_finding` asserts the risk rating against the answer key,
+and **May fails it**: zero laundering wires, rated Medium. July, with 23, is also Medium.
+
+No LLM judge catches this — each report is individually plausible and internally consistent, and
+only the answer key knows better. It is written as a failing test rather than a paragraph, so it
+stays visible until the rating is calibrated.
+
 ## Roadmap
 
 - [x] Phase 1 — Ingestion & semantic grounding

@@ -42,6 +42,17 @@ PRECISION_THRESHOLD = 0.70
 
 JUDGE_MODEL = os.environ.get("EVAL_MODEL", "gpt-4o")
 
+# DeepEval defaults every metric to async, which fires all four cases at once and drowned the
+# first run in `tenacity.RetryError` -- rate limiting, surfacing as an opaque retry exhaustion
+# rather than as a 429. Serial is slower (~4 minutes for 16 judgements) and actually finishes.
+# The same three cases score 1.00 serially that failed to score at all in parallel.
+ASYNC = False
+
+# DeepEval reprints a progress banner on every internal step, tens of thousands of characters per
+# run, which buries the reasons -- the one thing an LLM judge is for.
+os.environ.setdefault("DEEPEVAL_DISABLE_PROGRESS_BAR", "1")
+os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "1")
+
 
 def load_cases() -> list[dict]:
     if not CASES_PATH.exists():
@@ -71,14 +82,58 @@ def as_test_case(case: dict):
     )
 
 
+SCORES_PATH = CASES_PATH.parent / "eval_scores.json"
+
+
+def _diagnose(error: Exception) -> BaseException:
+    """Unwrap DeepEval's retry wrapper so the real failure is readable.
+
+    Every judge call goes through tenacity, so an exhausted account surfaces as
+    ``tenacity.RetryError[<Future ... state=finished raised ...>]`` with the actual message buried
+    three layers down. Three separate runs were spent reading that as rate limiting before the
+    real text turned out to be *"You have no credits remaining"*. Once is enough.
+    """
+    cause: BaseException = error
+    for _ in range(5):  # bounded: a cycle here would hang the suite
+        nxt = getattr(cause, "__cause__", None)
+        if nxt is None and hasattr(cause, "last_attempt"):
+            nxt = cause.last_attempt.exception() # type: ignore[attr-defined]
+        if nxt is None or nxt is cause:
+            break
+        cause = nxt
+
+    text = str(cause)
+    if "credit_balance_exhausted" in text or "insufficient_quota" in text:
+        # Not a failing report -- no report was scored at all. Failing here would record a
+        # quality regression that never happened.
+        pytest.skip("OpenAI account has no credits -- the judge could not run")
+    return cause
+
+
 def measure(metric, case: dict) -> float:
-    """Score one case and report the judge's reasoning on failure.
+    """Score one case, record it, and report the judge's reasoning on failure.
 
     ``assert_test`` would do this in one line, but it raises on the first failing metric and
     prints the score without the reason. A number with no explanation cannot be acted on, and the
     reason is the entire product of an LLM judge.
+
+    Every score is written to ``eval_scores.json``, passing ones included. A suite that only
+    surfaces failures cannot answer "did that prompt change help?" -- the run before had no record
+    of what it scored, so there is nothing to compare against.
     """
-    metric.measure(as_test_case(case))
+    try:
+        metric.measure(as_test_case(case))
+    except Exception as error:  # noqa: BLE001 -- unwrapped and re-raised below
+        raise _diagnose(error) from error
+
+    recorded = json.loads(SCORES_PATH.read_text()) if SCORES_PATH.exists() else {}
+    recorded.setdefault(case["name"], {})[type(metric).__name__] = {
+        "score": round(metric.score, 4),
+        "threshold": metric.threshold,
+        "passed": metric.score >= metric.threshold,
+        "reason": metric.reason,
+    }
+    SCORES_PATH.write_text(json.dumps(recorded, indent=2, sort_keys=True))
     return metric.score
 
 
@@ -90,10 +145,10 @@ def test_the_report_claims_only_what_the_clauses_support(case):
     from deepeval.metrics import FaithfulnessMetric
 
     metric = FaithfulnessMetric(threshold=FAITHFULNESS_THRESHOLD, model=JUDGE_MODEL,
-                                include_reason=True)
+                                include_reason=True, async_mode=ASYNC)
     score = measure(metric, case)
     assert score >= FAITHFULNESS_THRESHOLD, (
-        f"{case['name']} faithfulness {score:.2f} < {FAITHFULNESS_THRESHOLD}\n{metric.reason}"
+        f"{case['name']} faithfulness {score:.3f} < {FAITHFULNESS_THRESHOLD}\n{metric.reason}"
     )
 
 
@@ -105,10 +160,10 @@ def test_the_report_addresses_the_audit_that_was_requested(case):
     from deepeval.metrics import AnswerRelevancyMetric
 
     metric = AnswerRelevancyMetric(threshold=RELEVANCY_THRESHOLD, model=JUDGE_MODEL,
-                                   include_reason=True)
+                                   include_reason=True, async_mode=ASYNC)
     score = measure(metric, case)
     assert score >= RELEVANCY_THRESHOLD, (
-        f"{case['name']} relevancy {score:.2f} < {RELEVANCY_THRESHOLD}\n{metric.reason}"
+        f"{case['name']} relevancy {score:.3f} < {RELEVANCY_THRESHOLD}\n{metric.reason}"
     )
 
 
@@ -125,10 +180,10 @@ def test_retrieval_ranks_the_useful_clauses_above_the_noise(case):
     from deepeval.metrics import ContextualPrecisionMetric
 
     metric = ContextualPrecisionMetric(threshold=PRECISION_THRESHOLD, model=JUDGE_MODEL,
-                                       include_reason=True)
+                                       include_reason=True, async_mode=ASYNC)
     score = measure(metric, case)
     assert score >= PRECISION_THRESHOLD, (
-        f"{case['name']} context precision {score:.2f} < {PRECISION_THRESHOLD}\n{metric.reason}"
+        f"{case['name']} context precision {score:.3f} < {PRECISION_THRESHOLD}\n{metric.reason}"
     )
 
 
