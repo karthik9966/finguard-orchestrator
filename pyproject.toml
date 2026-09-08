@@ -39,6 +39,7 @@ dev = [
     # langchain_community.chat_models.vertexai, removed in
     # langchain-community 0.4.x. deepeval covers the three
     # blueprint metrics. Revisit when upstream fixes it.
+    "fakeredis>=2.38.0",
 ]
 
 # `uv sync` puts each on PATH. Every target is a

@@ -175,6 +175,9 @@ def print_run(state: AgentState) -> None:
           f"from {len(state.get('queries', []))} queries")
     print(f"critic     : {state.get('loop_count', 0)} pass(es), "
           f"confidence {state.get('confidence_score', 0):.2f}")
+    cache_stats = state.get("cache_stats")
+    if cache_stats is not None:
+        print(cache_stats.summary())
     usage = state.get("usage")
     if usage is not None:
         print(usage.summary())

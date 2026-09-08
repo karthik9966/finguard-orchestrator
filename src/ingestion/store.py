@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from functools import lru_cache
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -128,6 +129,20 @@ def build(backend_name: str = "minilm", *, rebuild: bool = False) -> dict:
             print(f"    upserted {min(start + UPSERT_BATCH, len(records)):>6,}/{len(records):,}")
 
     return stats()
+
+
+@lru_cache(maxsize=1)
+def collection_backend() -> str:
+    """Which embedding model built the collection.
+
+    Cached: §9.3's cache key needs it on every lookup, and re-reading collection metadata per
+    query would cost more than the cache saves. A rebuild changes the process, so a process-
+    lifetime cache is the right lifetime.
+    """
+    try:
+        return str(_client().get_collection(COLLECTION_NAME).metadata.get("backend") or "unknown")
+    except Exception:  # noqa: BLE001 - an absent collection is handled by the callers that care
+        return "unknown"
 
 
 def by_id(chunk_ids: list[str]) -> dict[str, dict]:

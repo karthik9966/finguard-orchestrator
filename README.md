@@ -611,8 +611,8 @@ Python from the retrieved set, so the drawer shows the text the model actually s
 whatever a fresh query would surface today. Verified on June — 2 of 2 citations resolve.
 
 **Telemetry (§6.5)** — per-node cost from the `UsageLedger`, per-node latency from the stream,
-tokens, and the audit_id. §6.5's "Semantic Cache Monitor" has nothing behind it since §9.3 was
-skipped, so that tile is the free/paid path indicator instead — the cost fact we do measure.
+tokens, and the audit_id. §6.5's "Semantic Cache Monitor" shows the real hit rate and
+the seconds saved, now that §9.3 is built.
 
 ### The Streamlit trap this is built around
 
@@ -721,6 +721,73 @@ Worth recording, because each was invisible to the test suite and to every local
    non-root container user cannot create. Now `EMBEDDING_CACHE_DIR`, following the same pattern
    `CHROMA_PERSIST_DIR` already used.
 
+## Semantic cache (§9.3)
+
+```bash
+docker run -d -p 6379:6379 --name finguard-redis redis:7-alpine
+uv run python -m src.utils.cache --stats
+```
+
+Caches the reranked clause list a query returns. Measured cold and warm on the June batch:
+
+| | audit node | cache |
+|---|---|---|
+| cold | **42.3s** | 0/8 hits |
+| warm | **0.0s** | **7/8 hits, ~21.2s saved** |
+
+The retrieved context is byte-identical between the two — asserted, because a cache whose value
+differs from the computed one is a bug that only appears on the second run.
+
+The one miss on a warm run is the **critic's reformulated query**, which is model-written and
+different every time. Correctly uncacheable, and it shows up honestly in the tally rather than
+being excluded to make the number look better.
+
+**This works because the queries are ten fixed templates**, chosen by a dict lookup on the
+candidate's shape rather than written by a model. Across the four batches, 23 query executions
+resolve to 9 distinct strings — 61% repeats before any cache existed. A pipeline that rewrote its
+queries per batch would cache nothing.
+
+### Retrieval only — reports are deliberately never cached
+
+A report narrative names **real account numbers and real amounts** — the June one carries 3
+accounts and 11 figures. Serving a "similar enough" cached report would put another batch's
+identifiers into a regulatory filing. Retrieved clauses carry no such risk: what the rulebook
+requires about structuring is the same answer whichever batch asked.
+
+So the blueprint's single similarity threshold is split here into *semantic for clauses, never
+for findings*. The consequence, stated plainly: **this saves time, not money.** Retrieval was
+already free; the model calls it sits in front of are untouched.
+
+### The 0.95 threshold rarely fires, and that is worth knowing
+
+§9.3's cutoff is 0.95 cosine. Measured against MiniLM on our own templates:
+
+| query against `"transactions deliberately structured to avoid detection or reporting thresholds"` | cosine | |
+|---|---|---|
+| the same words reordered | 0.991 | **hit** |
+| "structuring transactions below reporting limits" | 0.659 | miss |
+| "obligation to report transfers structured to avoid a threshold" | 0.642 | miss |
+| "fee disclosure obligations for retail clients" | 0.297 | miss |
+
+Genuine paraphrases score around 0.65 on this model, so at 0.95 only near-identical rewordings
+match. **The entire measured win comes from exact-key matching**, which is fine — the templates
+are fixed strings and always take that path. The threshold is left at the blueprint's value
+because lowering it trades a safety margin for hits on a path that is not where the time goes;
+`SEMANTIC_CACHE_THRESHOLD` is the knob if that trade ever becomes worth making.
+
+### Degrading is the requirement, not a nicety
+
+With Redis stopped, **all 233 tests pass and audits run normally** — verified both ways. The
+cache is enabled by presence, not by a flag: no reachable server means no caching, silently and
+correctly. A failed connection is remembered for the process, because re-learning it cost a full
+connect timeout on every `audit_node` call and took the suite from 30s to 96s.
+
+**Invalidation is TTL alone (24h).** The consequence, said rather than buried: re-index the corpus
+with `finguard-store` and cached entries can serve clauses from the *old* index until they
+expire. Run `uv run python -m src.utils.cache --flush` after a rebuild.
+
+`docker-compose.yml` brings the API and Redis up together.
+
 ## Roadmap
 
 - [x] Phase 1 — Ingestion & semantic grounding
@@ -738,7 +805,7 @@ Worth recording, because each was invisible to the test suite and to every local
   - [x] §8 DeepEval harness — Faithfulness, Relevancy, Context Precision
   - [x] §9.2 Hierarchical cost pre-router (already `route_after_detect`), now measured
   - [x] §9.4 FlashRank reranking — adopted; the 15→4 prune measured unsafe and rejected
-  - [ ] §9.3 Redis semantic cache — **deliberately skipped**, see below
+  - [x] §9.3 Redis semantic cache — retrieval layer; reports deliberately excluded
 - [x] Phase 4 — Streamlit cockpit & Docker packaging
   - [x] §5.1 Pydantic output schema (pulled forward into Phase 2, enforced in `generate_node`)
   - [x] §6.1–6.2 Ingestion sidebar & active audit workspace
@@ -747,9 +814,8 @@ Worth recording, because each was invisible to the test suite and to every local
   - [x] §10 FastAPI service — verified end to end
   - [x] §10 Docker image — built and verified: 3.13 GB, full audit inside the container
 
-**§9.3 skipped by decision.** The blueprint caches the auditor's free-text query; Decision 3
-replaced that with fixed templates, so there is no query to cache and the retrieval it would
-protect is a local ChromaDB lookup that is already free. Keyed on candidate geometry it would
-work, but B2 measured a batch at $0.06–$0.18 and this project runs four of them — the saving is
-an architecture demonstration, not an economy. Revisit at a volume where recurring geometry is
-common.
+**Every blueprint milestone is now built.** §9.3 was skipped once on the grounds that the saving
+was an architecture demonstration rather than an economy; it was built after Phase 4 added the
+cockpit (making those seconds something a person watches) and the command bar (giving the
+pipeline its first free-text query). The report-caching half remains deliberately unbuilt — see
+the §9.3 section for why that is a safety decision rather than an omission.

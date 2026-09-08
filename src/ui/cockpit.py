@@ -274,6 +274,17 @@ if st.toggle("Telemetry & diagnostics"):
         ]
         st.dataframe(breakdown, hide_index=True, use_container_width=True)
 
+    # §6.5's Semantic Cache Monitor. Until §9.3 was built this tile had nothing behind it and
+    # showed the free/paid path instead; now it shows the real thing.
+    cache_stats = state.get("cache_stats")
+    if cache_stats is not None and cache_stats.lookups:
+        icon = "🟢 CACHE HIT" if cache_stats.hits else "🔴 CACHE MISS"
+        st.caption(
+            f"{icon} — {cache_stats.hits}/{cache_stats.lookups} retrievals served from Redis"
+            + (f" ({cache_stats.semantic_hits} by similarity)" if cache_stats.semantic_hits else "")
+            + (f", ~{cache_stats.seconds_saved:.1f}s saved" if cache_stats.seconds_saved else "")
+        )
+
     free_nodes = {n: s for n, s in held["timings"].items() if n in {"parse", "detect", "audit"}}
     if free_nodes:
         st.caption(

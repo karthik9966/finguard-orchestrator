@@ -78,6 +78,21 @@ class StubModel:
 
 
 @pytest.fixture(autouse=True)
+def cache_off(monkeypatch):
+    """§9.3's cache must not reach a real Redis from the suite.
+
+    It intercepts *before* `nodes.retrieve`, so a developer with Redis running would get real
+    cached clauses where the test monkeypatched a stub -- seven tests failed exactly that way the
+    first time this ran on a machine with the container up. Tests that want cache behaviour drive
+    it explicitly through fakeredis in test_cache.py.
+    """
+    from src.utils import cache as cache_module
+
+    monkeypatch.setattr(cache_module.RetrievalCache, "connect",
+                        classmethod(lambda cls, client=None: cls(client=None))) # type: ignore
+
+
+@pytest.fixture(autouse=True)
 def reranker_off(monkeypatch):
     """The suite's promise is that it needs no key and touches no network. §9.4's reranker breaks
     that on a fresh checkout -- FlashRank downloads a 3 MB model on first use, and it caches to
@@ -728,6 +743,25 @@ def test_tracing_reports_itself_as_off_without_a_key(monkeypatch):
 
     monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
     assert tracing_project() is None
+
+def test_cache_stats_accumulate_across_the_refinement_pass(stub_retrieval):
+    """audit_node runs twice when the critic loops. A fresh tally on the second pass replaced the
+    first's, so a run that served 7 of 8 retrievals from cache reported "0/1 hits (cold)"."""
+    from src.utils.cache import CacheStats
+
+    state = initial_state("x")
+    state["candidates"] = sample_candidates()
+    state["cache_stats"] = CacheStats(exact_hits=7, misses=0, seconds_saved=12.1)
+    state["loop_count"] = 1
+    state["critique"] = "obligation to report linked transfers"
+
+    stats = nodes.audit_node(state)["cache_stats"]
+    assert stats.exact_hits == 7, "the first pass's hits survive the second"
+    assert stats.seconds_saved == pytest.approx(12.1)
+    # No miss is recorded here: the fixture leaves the cache unavailable, and "never consulted"
+    # is deliberately distinct from "consulted and missed" -- CacheStats.summary() says so.
+    assert stats.misses == 0
+
 
 # --- 8. the cockpit's seams (§6) ------------------------------------------------------------
 

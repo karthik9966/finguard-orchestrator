@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,8 @@ from src.graph.state import (
     AgentState,
     ComplianceReport,
 )
-from src.ingestion.store import retrieve
+from src.ingestion.store import collection_backend, retrieve
+from src.utils.cache import RetrievalCache, fingerprint
 from src.utils.detectors import Candidate, detect
 from src.utils.swift_parser import MalformedMessage, Wire, parse_batch
 
@@ -283,10 +285,24 @@ def audit_node(state: AgentState) -> dict[str, Any]:
     documents = {d.metadata["chunk_id"]: d for d in state.get("retrieved_context", [])}
     refining = bool(state.get("loop_count", 0)) and bool(state.get("critique"))
     reserved: list[str] = []
+    # Carried across passes rather than rebuilt. audit_node runs again on a refinement, and a
+    # fresh tally there replaced the first pass's -- a warm run that hit 7/7 then reported
+    # "0/1 (cold)", because the critic's reformulated query is new every time and always misses.
+    cache = RetrievalCache.connect()
+    cache.stats = state.get("cache_stats") or cache.stats
     for query in new_queries:
-        hits = retrieve(query, k=RETRIEVE_K, tiers=tiers)
-        if USE_RERANKER:
-            hits = rerank(query, hits)
+        # §9.3. The *reranked* list is what gets cached, not the raw one: rerank is only 0.04s of
+        # the 1.77s, and caching after it guarantees a hit and a miss produce the same ordering.
+        # A cached value that differed from the computed one would be a bug that only appears on
+        # the second run.
+        sha = fingerprint(query, tiers, RETRIEVE_K, collection_backend())
+        hits = cache.get(sha, query)
+        if hits is None:
+            started = time.perf_counter()
+            hits = retrieve(query, k=RETRIEVE_K, tiers=tiers)
+            if USE_RERANKER:
+                hits = rerank(query, hits)
+            cache.put(sha, query, hits, elapsed=time.perf_counter() - started)
         # The auditor's own question gets seats for the same reason the critic's does: a single
         # list cannot out-score seven fused ones, so a query that is never seated is a query that
         # changes nothing.
@@ -326,6 +342,7 @@ def audit_node(state: AgentState) -> dict[str, Any]:
     return {
         "queries": queries + new_queries,
         "retrieved_context": ranked[:MAX_CONTEXT_CLAUSES],
+        "cache_stats": cache.stats,
     }
 
 
