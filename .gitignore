@@ -16,7 +16,12 @@ __pycache__/
 data/raw/
 data/processed/
 chroma_db/
-docs/
+# docs/ holds two kinds of thing: the engineering artifacts are source and belong in a diff like
+# code, while the blueprint PDF and the rendered graph are an input and a build output.
+# `docs/*` rather than `docs/` -- git cannot re-include a file whose parent *directory* is
+# excluded, so with `docs/` the negation below is silently dead.
+docs/*
+!docs/*.md
 *.sqlite3
 
 # OS / editor

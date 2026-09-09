@@ -788,6 +788,24 @@ expire. Run `uv run python -m src.utils.cache --flush` after a rebuild.
 
 `docker-compose.yml` brings the API and Redis up together.
 
+## Engineering artifacts
+
+The README is the tour. These are the working documents, and they are written to be read by an
+agent picking this up cold as much as by a person:
+
+| | |
+|---|---|
+| [docs/DESIGN.md](docs/DESIGN.md) | **start here** — the organising principle, nine decisions that look wrong and are not, and the known defects |
+| [docs/HLD.md](docs/HLD.md) | structure: components, data flow, trust boundaries, deployment |
+| [docs/LLD.md](docs/LLD.md) | contracts, every constant, and the measurement behind each one |
+| [docs/TEST_DESIGN.md](docs/TEST_DESIGN.md) | what is verified, how, and what deliberately is not |
+| [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) | the latest full run, 2026-09-08 |
+| [docs/CHANGELOG.md](docs/CHANGELOG.md) | 17 commits, four phases, and why each decision went the way it did |
+
+They are **as-built**, not aspirational: every figure is measured on this repository, and where a
+decision reversed an earlier one both are recorded — a document that shows only the winning branch
+hides the reason it won.
+
 ## Roadmap
 
 - [x] Phase 1 — Ingestion & semantic grounding
