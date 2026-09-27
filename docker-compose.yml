@@ -1,26 +1,16 @@
-# The service and its cache together. Redis is optional by design -- `docker compose up api`
-# alone runs uncached and correct -- but running both is the intended shape.
+# Single-box deployment -- LLD §8.
+#
+# Redis is gone. The pre-migration system cached retrieved clauses in it, which measurably worked
+# (44.0s -> 0.0s on a warm audit node), but the new HLD §3 drops caching for v1: a monthly batch
+# has no high-frequency duplicate-query volume for a cache to exploit, and per-candidate retrieval
+# makes each query more specific than the batch-level ones that used to repeat. Revisit only if
+# profiling shows repeated work.
 services:
-  redis:
-    image: redis:7-alpine
-    ports: ["6379:6379"]
-    # 64 MB caps a store that holds ~0.43 MB warm; allkeys-lru means a runaway evicts rather
-    # than refusing writes, since every entry here is disposable by construction.
-    command: redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-
   api:
     build: .
     ports: ["8000:8000"]
     environment:
-      REDIS_HOST: redis
-      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in your environment or .env}
+      LLM_API_KEY: ${LLM_API_KEY:?set LLM_API_KEY in your environment or .env}
     volumes:
       # Not :ro -- ChromaDB is SQLite underneath and opens a journal even to read.
       - ./chroma_db:/app/chroma_db
-    depends_on:
-      redis: {condition: service_healthy}

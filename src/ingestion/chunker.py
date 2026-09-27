@@ -25,14 +25,17 @@ from collections.abc import Callable, Sequence
 
 import numpy as np
 
+from src.config import get_config
+
 # A chunk shorter than this is usually a stub that retrieves badly on its own; longer than
 # this and the reranker has to carry too much irrelevant text into the prompt.
-MIN_CHARS = 200
-MAX_CHARS = 2000
-DEFAULT_PERCENTILE = 95.0
+# Value now lives in config.yaml (LLD §8). Shim for the migration -- Phase 5 deletes it.
+MIN_CHARS = get_config().chunking.min_chars
+MAX_CHARS = get_config().chunking.max_chars
+DEFAULT_PERCENTILE = get_config().chunking.percentile
 
 # Below this many sentences a percentile is not a statistic, it is noise.
-MIN_SENTENCES_FOR_PERCENTILE = 6
+MIN_SENTENCES_FOR_PERCENTILE = get_config().chunking.min_sentences_for_percentile
 
 Encoder = Callable[[Sequence[str]], np.ndarray]
 

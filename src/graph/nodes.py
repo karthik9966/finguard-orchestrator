@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import os
 import re
-import time
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -32,12 +31,13 @@ from src.graph.state import (
     AgentState,
     ComplianceReport,
 )
+from src.config import get_config
 from src.ingestion.store import collection_backend, retrieve
-from src.utils.cache import RetrievalCache, fingerprint
 from src.utils.detectors import Candidate, detect
 from src.utils.swift_parser import MalformedMessage, Wire, parse_batch
 
-RETRIEVE_K = 15
+# Value now lives in config.yaml (LLD §8). Shim for the migration -- Phase 5 deletes it.
+RETRIEVE_K = get_config().retrieval.k_indicators
 
 # Seven queries at k=15 dedupe to ~93 clauses on a real batch, and handing all of them to the
 # drafter measurably made the report worse: with 93 clauses in context the model cited nothing
@@ -59,7 +59,8 @@ MAX_CONTEXT_CLAUSES = 24
 # intuitive alternatives are worse (round-robin 23, min-max normalised distance 42). 60 is the
 # constant from the original paper -- it damps the top of each list so a single query's rank-1
 # cannot dominate a clause that several queries agree on.
-RRF_K = 60
+# Value now lives in config.yaml (LLD §8). Shim for the migration -- Phase 5 deletes it.
+RRF_K = get_config().retrieval.rrf_k
 
 # §9.4. Reranking is on by default because it is free -- a 3 MB CPU model beside a gpt-4o call --
 # and measurably better: on ObliQA's 2,786 labelled questions it lifts hit@1 from 45.2% to 55.6%
@@ -285,24 +286,10 @@ def audit_node(state: AgentState) -> dict[str, Any]:
     documents = {d.metadata["chunk_id"]: d for d in state.get("retrieved_context", [])}
     refining = bool(state.get("loop_count", 0)) and bool(state.get("critique"))
     reserved: list[str] = []
-    # Carried across passes rather than rebuilt. audit_node runs again on a refinement, and a
-    # fresh tally there replaced the first pass's -- a warm run that hit 7/7 then reported
-    # "0/1 (cold)", because the critic's reformulated query is new every time and always misses.
-    cache = RetrievalCache.connect()
-    cache.stats = state.get("cache_stats") or cache.stats
     for query in new_queries:
-        # §9.3. The *reranked* list is what gets cached, not the raw one: rerank is only 0.04s of
-        # the 1.77s, and caching after it guarantees a hit and a miss produce the same ordering.
-        # A cached value that differed from the computed one would be a bug that only appears on
-        # the second run.
-        sha = fingerprint(query, tiers, RETRIEVE_K, collection_backend())
-        hits = cache.get(sha, query)
-        if hits is None:
-            started = time.perf_counter()
-            hits = retrieve(query, k=RETRIEVE_K, tiers=tiers)
-            if USE_RERANKER:
-                hits = rerank(query, hits)
-            cache.put(sha, query, hits, elapsed=time.perf_counter() - started)
+        hits = retrieve(query, k=RETRIEVE_K, tiers=tiers)
+        if USE_RERANKER:
+            hits = rerank(query, hits)
         # The auditor's own question gets seats for the same reason the critic's does: a single
         # list cannot out-score seven fused ones, so a query that is never seated is a query that
         # changes nothing.
@@ -342,7 +329,6 @@ def audit_node(state: AgentState) -> dict[str, Any]:
     return {
         "queries": queries + new_queries,
         "retrieved_context": ranked[:MAX_CONTEXT_CLAUSES],
-        "cache_stats": cache.stats,
     }
 
 

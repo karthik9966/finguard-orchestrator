@@ -30,6 +30,7 @@ from pathlib import Path
 import chromadb
 from chromadb.config import Settings
 
+from src.config import get_config
 from src.ingestion.embeddings import BACKENDS, MissingCredentials, get_backend
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -38,8 +39,9 @@ CHUNK_DIR = PROJECT_ROOT / "data" / "processed" / "chunks"
 PERSIST_DIR = Path(os.environ.get("CHROMA_PERSIST_DIR", PROJECT_ROOT / "chroma_db"))
 COLLECTION_NAME = os.environ.get("CHROMA_COLLECTION", "regulations")
 
-UPSERT_BATCH = 1000
-DEFAULT_K = 15
+# Value now lives in config.yaml (LLD §8). Shim for the migration -- Phase 5 deletes it.
+UPSERT_BATCH = get_config().ingestion.upsert_batch
+DEFAULT_K = get_config().retrieval.k_indicators
 
 # Chroma stores the text in `documents` and everything else in `metadatas`; these two are not
 # metadata. `passage_uuid` stays -- it is ObliQA's real primary key and worth keeping for tracing.

@@ -20,7 +20,9 @@ cites a regulation the agent picked to match a label Python had already decided 
 
 Recall is what these rules are tuned for, and precision is deliberately not. A missed cluster is
 a regulatory failure; an extra clean cluster costs tokens and a few minutes of an analyst's
-attention. Measured on all three batches, ``MIN_CLUSTER_WIRES = 3`` finds every planted cluster
+attention. Measured on all three batches, ``# Phase 3 splits this in two: fan-in counts distinct sources, fan-out distinct targets.
+# Value now lives in config.yaml (LLD §8). Shim for the migration -- Phase 5 deletes it.
+MIN_CLUSTER_WIRES = get_config().detection.fan_in.min_sources`` finds every planted cluster
 at 23-39% precision.
 
 Usage::
@@ -39,6 +41,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from src.config import get_config
 from src.utils.swift_parser import Wire, existing_log, parse_batch
 
 CONCENTRATION = "concentration"
@@ -52,10 +55,11 @@ MIN_CLUSTER_WIRES = 3
 
 # A chain of two wires is just a payment being passed on. Three hops is where "money is moving
 # through accounts" starts to describe it.
-MIN_PATH_HOPS = 3
-MAX_PATH_GAP_DAYS = 7
-MAX_PATH_LENGTH = 25  # a guard against pathological graphs, never reached on a 220-wire batch
-PATH_OVERLAP = 0.6  # share of wires above which a chain is a retelling of one already reported
+# Value now lives in config.yaml (LLD §8). Shim for the migration -- Phase 5 deletes it.
+MIN_PATH_HOPS = get_config().detection.cycle.min_hops
+MAX_PATH_GAP_DAYS = get_config().detection.window_days
+MAX_PATH_LENGTH = get_config().detection.cycle.max_length  # guard against pathological graphs
+PATH_OVERLAP = get_config().detection.cycle.path_overlap
 
 # An outlier is measured against its own currency where there is enough of it to have a norm,
 # because SAML-D quotes each wire in its payment currency and a JPY figure is not a GBP figure.

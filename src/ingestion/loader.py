@@ -29,6 +29,7 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
+from src.config import get_config
 from src.ingestion.chunker import (
     DEFAULT_PERCENTILE,
     MAX_CHARS,
@@ -48,10 +49,11 @@ OBLIQA_DOCS = REGULATIONS / "obliqa" / "StructuredRegulatoryDocuments"
 CHUNK_DIR = DATA_DIR / "processed" / "chunks"
 
 # Passages this short are headings or numbering artefacts, not retrievable content.
-MIN_PASSAGE_CHARS = 40
+# Value now lives in config.yaml (LLD §8). Shim for the migration -- Phase 5 deletes it.
+MIN_PASSAGE_CHARS = get_config().chunking.min_passage_chars
 # Below this a chunk is a fragment like "(c) enquire into the background..."; prefixing the
 # document and clause makes it self-describing without changing its citation.
-CONTEXT_PREFIX_BELOW = 200
+CONTEXT_PREFIX_BELOW = get_config().chunking.context_prefix_below
 
 # Tiers from the §3.2 corpus analysis: only 2.9% of ObliQA passages are AML-bearing and 62% of
 # those sit in Document 1. Tier 3 is kept indexed as the distractor set that makes §8.1 Context

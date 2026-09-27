@@ -1,0 +1,86 @@
+# The fast deterministic gate -- Evaluation Design §6, gate 1.
+#
+# Runs on every push and pull request, in under five minutes, with no model key and no network
+# access from the tests themselves. It blocks a merge if node logic, a schema, or the "stay quiet
+# on a clean batch" guarantee breaks.
+#
+# This workflow lands in Phase 0 of the migration rather than Phase 8, where the plan originally
+# put it. The migration's central promise is "the suite is green and the system runs at the end of
+# every phase", and a promise whose only enforcement arrives eight phases later is not enforced at
+# all -- it is remembered.
+#
+# The paid ML gate (recall, faithfulness, context precision, triage) is nightly and lives in
+# nightly.yml, because it costs real model calls.
+name: PR gate
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deterministic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15   # the suite takes ~40s; this catches a hang, not slowness
+
+    env:
+      # The offline guarantee, asserted by the environment rather than by discipline. Three times
+      # before the migration a change quietly made the free suite depend on something external --
+      # FlashRank downloading a 3 MB model, the retrieval cache intercepting a stubbed retrieval,
+      # a runtime import declared as a dev dependency. Each was invisible locally because a
+      # developer machine already had the thing.
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      # No key is set, anywhere. A test that needs one fails here rather than in review.
+      ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        # --frozen: the lockfile is the contract. A pyproject change without a re-lock fails here
+        # instead of resolving to something nobody tested.
+        run: uv sync --frozen
+
+      - name: Assert no model credentials are present
+        # The suite's promise is that it needs no key. If one leaks in through a repository
+        # secret or a default, every downstream assertion about cost and offline behaviour
+        # becomes untrustworthy, so this is checked rather than assumed.
+        run: |
+          for name in LLM_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY; do
+            if [ -n "${!name:-}" ]; then
+              echo "::error::$name is set in the PR gate; this suite must run without credentials"
+              exit 1
+            fi
+          done
+          echo "no model credentials present"
+
+      - name: Config and contract validation
+        # Fast and first: if config.yaml or the Pydantic contracts are broken, every other failure
+        # in this run is downstream noise. Evaluation Design Tier 1 makes schema conformance a
+        # hard gate, and this is its cheapest half.
+        run: uv run pytest tests/test_config.py tests/test_models.py tests/test_redaction.py -q
+
+      - name: Deterministic suite
+        run: uv run pytest tests/ -q --strict-markers
+
+      - name: Report what was skipped
+        # Several suites skip when generated data or a cached model is absent, which is the
+        # normal state of a fresh checkout. Skips are legitimate but must stay visible: a
+        # gate that silently covers less than it appears to is worse than a smaller gate.
+        if: always()
+        run: |
+          uv run pytest tests/ -q -rs 2>&1 | sed -n '/short test summary/,$p' || true

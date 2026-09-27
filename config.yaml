@@ -1,0 +1,148 @@
+# FinGuard tunable parameters -- LLD §8.
+#
+# The split this file enforces: **numbers never in code, secrets never in this file.** Anything
+# with a dollar value, a threshold, a count or a window lives here; API keys, hostnames and
+# database URLs live in the environment and are read by `Settings` in src/config.py.
+#
+# Every number carried over from the pre-migration system keeps the measurement that chose it.
+# Those measurements were taken on this repository, not projected, and a change to one of them
+# should be accompanied by a new measurement -- not a hunch.
+
+schema: 1
+
+# ---------------------------------------------------------------------------------------------
+# Retrieval -- LLD §2.4
+# ---------------------------------------------------------------------------------------------
+retrieval:
+  # Tier-2 indicator candidates pulled from the vector store before reranking. 15 is the
+  # blueprint figure and the one every recorded hit@k number was measured at (hit@15 79.2%),
+  # so changing it invalidates the retrieval benchmark's comparability.
+  k_indicators: 15
+
+  # How many reranked indicators reach the grounding prompt. The pre-migration system carried
+  # 24 clauses because ONE pool was shared by every candidate in the batch; per-candidate
+  # retrieval does not need that, and a cross-encoder's precision is concentrated at the top.
+  # Provisional: Phase 8's Complex_Query_Set context precision sets this for real.
+  rerank_top_n: 5
+
+  # LLD §2.4 specifies a single query_text per candidate. The pre-migration system issued 2-4
+  # templated queries and fused them with reciprocal rank fusion, which measurably beat every
+  # alternative merge (the cited clause moved from rank 20 to 10). That win was on *semantic
+  # discovery of obligations*, which the curated Tier-1 map now replaces -- so single-query is
+  # the default and RRF stays available behind this flag until Phase 8 measures both.
+  multi_query_rrf: false
+  rrf_k: 60           # from the original RRF paper; only read when multi_query_rrf is true
+
+# ---------------------------------------------------------------------------------------------
+# Detection -- LLD §2.6
+# ---------------------------------------------------------------------------------------------
+detection:
+  # The observation window every detector shares, in days. 7 is inherited from the path
+  # detector's MAX_PATH_GAP_DAYS, where it was chosen because SAML-D laundering chains run
+  # 10-15 hops inside a single month. NOTE: fan-in and fan-out had no window at all before the
+  # migration, so applying one to them is a behaviour change to watch in the recall harness.
+  window_days: 7
+
+  structuring:
+    # US monitored thresholds. $10,000 is the CTR filing threshold (31 CFR 1010.311); $3,000 is
+    # the funds-transfer recordkeeping threshold (31 CFR 1010.410).
+    thresholds: [10000, 3000]
+    # A transaction counts toward structuring when it sits in [T - band, T). The LLD names a
+    # single absolute `band`, which cannot serve both thresholds sensibly -- an absolute 2000
+    # would make the $3,000 band [1000, 3000), catching most ordinary payments. A fraction of T
+    # gives [8000, 10000) and [2400, 3000). Deviation from LLD §8, recorded deliberately.
+    band_fraction: 0.2
+    min_count: 3          # fewer than 3 sub-threshold transfers is not a pattern
+    min_aggregate_multiple: 1.0   # the group must total at least T to be worth reporting
+
+  fan_in:
+    min_sources: 3        # inherited from MIN_CLUSTER_WIRES; 4 lost Layered_Fan_Out entirely
+  fan_out:
+    min_targets: 3
+  cycle:
+    min_hops: 3
+    max_length: 25
+    # Above this share of overlapping transaction references, a chain is a retelling of one
+    # already reported. Without it a single ring produced 11 near-duplicate chains; it found 2
+    # after. Branching chains are not subsets of each other, so plain subset dedup misses them.
+    path_overlap: 0.6
+    # Funds must come back roughly intact for a ring to read as laundering rather than
+    # coincidence. SAML-D cycles decay 10-20% per hop.
+    min_retained_fraction: 0.5
+  scatter_gather:
+    min_fan: 3            # one -> many -> one needs at least three intermediaries to be a shape
+
+  # detection_confidence = f(tightness, count, window compactness, aggregate ratio).
+  # Weights sum to 1.0. Tightness is measured on the threshold-band subset, never the whole
+  # group: one legitimate large wire moved a cluster's coefficient of variation by 43x, which is
+  # the recorded weakness of the pre-migration scoring.
+  confidence_weights:
+    tightness: 0.4
+    member_count: 0.2
+    window_compactness: 0.2
+    aggregate_ratio: 0.2
+
+  # CandidateReconciler precedence, strongest claim first. This is load-bearing rather than
+  # hygiene: fan_out fires on the first leg of every scatter_gather and on several typologies
+  # the PRD puts out of scope (gather-scatter, layered fan-out, bipartite), so the more specific
+  # shape must win before fan_out is allowed to report the same transactions.
+  precedence_order: [structuring, cycle, scatter_gather, fan_in, fan_out]
+
+# ---------------------------------------------------------------------------------------------
+# Reasoning core -- LLD §5
+# ---------------------------------------------------------------------------------------------
+reasoning:
+  # Below this critique score the retrieval question is reformulated and the candidate loops.
+  confidence_threshold: 0.75
+  # The give-up point, after which a candidate finalises as needs_review. 17.2% of gold
+  # questions have no correct clause in the top 15 at all, so a third attempt usually spends
+  # money on a clause that is not in the collection.
+  max_loops: 2
+  # The bar a finding must clear to be filed High. High means *file a SAR*, so it needs the top
+  # band, not merely enough score to stop the loop. Applied in ReportGenerationNode -- NOT in
+  # the critic, whose prompt forbids it from changing any fact.
+  high_risk_min_confidence: 0.9
+  # A model that returns off-schema output is re-prompted with the validation error before the
+  # candidate is given up on (LLD §6, SCHEMA_PARSE_FAILURE).
+  schema_retries: 3
+  llm_max_attempts: 3          # tenacity attempts on 429/5xx/timeout
+  llm_timeout_seconds: 60
+
+# ---------------------------------------------------------------------------------------------
+# Chunking -- LLD §2.1
+# ---------------------------------------------------------------------------------------------
+chunking:
+  min_chars: 200
+  max_chars: 2000
+  percentile: 95.0              # cosine-boundary threshold, computed per document
+  min_sentences_for_percentile: 6
+  min_passage_chars: 40         # below this a passage is a bare heading, not a clause
+  context_prefix_below: 200     # short chunks get a "{title} - {clause}: " prefix to stay citable
+
+# ---------------------------------------------------------------------------------------------
+# Ingestion -- LLD §2.2
+# ---------------------------------------------------------------------------------------------
+ingestion:
+  upsert_batch: 1000
+  # LLD §6 INGEST_ROW_MALFORMED: a line that fails deterministic parsing gets exactly one
+  # light-model extraction attempt. If that also fails it is quarantined, never guessed at.
+  llm_fallback_attempts: 1
+
+# ---------------------------------------------------------------------------------------------
+# Tier-1 obligation map -- LLD §2.4
+#
+# Curated as (source_id, section_ref) pairs, NOT chunk ids. A chunk id is
+# hash(source_id, section_ref, version), so a re-chunk or a version bump would silently
+# invalidate literal ids -- and per LLD §6 an OBLIGATION_MAP_MISS disables grounding for an
+# entire typology. VectorStoreClient.resolve() turns these pairs into ids at load time, and
+# tests/test_obligation_map.py asserts every one of them resolves.
+#
+# Filled in Phase 1c, once the US corpus is acquired and chunked. Empty is a valid state only
+# before then: the resolve test fails loudly on an empty map.
+# ---------------------------------------------------------------------------------------------
+pattern_to_obligations:
+  structuring: []
+  fan_in: []
+  fan_out: []
+  cycle: []
+  scatter_gather: []

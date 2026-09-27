@@ -15,8 +15,8 @@ from typing import Any, Literal, TypedDict
 from langchain_core.documents import Document
 from pydantic import BaseModel, Field, field_validator
 
+from src.config import get_config
 from src.graph.cost import UsageLedger
-from src.utils.cache import CacheStats
 from src.utils.detectors import Candidate
 from src.utils.swift_parser import Wire
 
@@ -26,15 +26,17 @@ RiskRating = Literal["Low", "Medium", "High"]
 # retrieval question is reformulated. Two refinements is the give-up point -- Phase 1 measured
 # that 17.2% of questions have no correct clause in the top 15 at all, so a third attempt is
 # usually spending money on a clause that is not in the collection.
-CONFIDENCE_THRESHOLD = 0.75
-MAX_REFINEMENTS = 2
+# Value now lives in config.yaml (LLD §8). Shim for the migration -- Phase 5 deletes it.
+CONFIDENCE_THRESHOLD = get_config().reasoning.confidence_threshold
+MAX_REFINEMENTS = get_config().reasoning.max_loops
 
 # The bar a finding must clear before it may be filed as High risk. CRITIC_SYSTEM's own scale
 # reserves 1.0 for "every regulatory claim cites a retrieved clause that genuinely says what is
 # claimed" and puts 0.75 at "supported, but thin -- a claim leans on a clause that is only
 # loosely on point". High means *file a SAR*, so it needs the top band, not merely enough score
 # to stop the refinement loop.
-HIGH_RISK_CONFIDENCE = 0.9
+# Value now lives in config.yaml (LLD §8). Shim for the migration -- Phase 5 deletes it.
+HIGH_RISK_CONFIDENCE = get_config().reasoning.high_risk_min_confidence
 
 
 class AgentState(TypedDict, total=False):
@@ -65,7 +67,6 @@ class AgentState(TypedDict, total=False):
     critique: str
     audit_id: str
     auditor_query: str
-    cache_stats: CacheStats | None
     usage: UsageLedger | None
     reservations: list[str]
     report: "ComplianceReport | None"
