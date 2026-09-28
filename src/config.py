@@ -313,6 +313,30 @@ class Config(BaseModel):
     chunking: ChunkingConfig
     ingestion: IngestionConfig
     pattern_to_obligations: dict[PatternType, list[ObligationRef]]
+    source_topics: dict[str, list[str]] = Field(default_factory=dict)
+
+    @field_validator("source_topics")
+    @classmethod
+    def typology_tags_are_spelled_correctly(cls, mapping: dict[str, list[str]]) -> dict[str, list[str]]:
+        """A tag that looks like a typology must be one.
+
+        `fan_in` and `faninn` both filter to nothing at retrieval time, and only one of them is
+        a mistake -- but neither raises, so a typo would surface as a finding that quietly lost
+        its indicators. Tags that are not typology names (`sar`, `cash`, `red_flags`) are free
+        text by design; only the near-misses are worth catching.
+        """
+        known = set(PATTERN_TYPES)
+        for source_id, tags in mapping.items():
+            for tag in tags:
+                squashed = tag.replace("-", "_").replace(" ", "_").lower()
+                if squashed not in known and any(
+                    squashed.replace("_", "") == pattern.replace("_", "") for pattern in known
+                ):
+                    raise ValueError(
+                        f"{source_id}: topic tag {tag!r} looks like a typology but is not one of "
+                        f"{sorted(known)}"
+                    )
+        return mapping
 
     @field_validator("pattern_to_obligations")
     @classmethod

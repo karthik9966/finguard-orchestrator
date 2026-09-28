@@ -146,3 +146,34 @@ pattern_to_obligations:
   fan_out: []
   cycle: []
   scatter_gather: []
+
+# ---------------------------------------------------------------------------------------------
+# topic_tags per source (LLD §3.2). Inherited by every chunk cut from that source, and the
+# Tier-2 indicator filter in Phase 4 reads them.
+#
+# Curated rather than derived: the manifest's `note` was written as prose for a human, and tags
+# inferred from it would be inconsistent in exactly the way a filter cannot tolerate. A tag that
+# names a typology must be one of PATTERN_TYPES -- config.py rejects a typo at startup rather
+# than letting it silently narrow a retrieval to nothing.
+# ---------------------------------------------------------------------------------------------
+source_topics:
+  31usc5324:                                [structuring, ctr]
+  31cfr1010.311:                            [ctr, reporting]
+  31cfr1010.410:                            [funds_transfer, recordkeeping]
+  31cfr1020.210:                            [customer_due_diligence]
+  31cfr1020.320:                            [sar, reporting]
+  finra-3110:                               [supervision]
+  finra-3310:                               [aml_program]
+  finra-rn-19-18:                           [red_flags, structuring, funds_transfer]
+  ffiec-appendix-f:                         [red_flags, structuring, funds_transfer, cash]
+  ffiec-manual-sar:                         [sar, reporting]
+  ffiec-manual-ctr:                         [ctr, reporting]
+  ffiec-manual-funds-transfer-recordkeeping: [funds_transfer, recordkeeping]
+  ffiec-manual-monetary-instruments:        [monetary_instruments, cash]
+  ffiec-risk-ach:                           [ach, funds_transfer]
+  ffiec-risk-cash-intensive:                [cash, structuring]
+  ffiec-risk-concentration-accounts:        [concentration, fan_in]
+  ffiec-risk-funds-transfers:               [funds_transfer, wire, scatter_gather]
+  fincen-2022-alert002:                     [red_flags, sanctions]
+  fincen-2022-alert003:                     [red_flags, export_control]
+  fincen-2023-alert002:                     [red_flags, real_estate]

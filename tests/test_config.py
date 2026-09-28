@@ -7,6 +7,8 @@ contradict each other.
 
 from __future__ import annotations
 
+import re
+
 import os
 import subprocess
 import sys
@@ -82,8 +84,13 @@ def test_no_secret_is_readable_from_the_config_file():
             yield node
 
     data = " ".join(walk(raw_config())).lower()
-    for smell in ("api_key", "apikey", "secret", "password", "bearer", "sk-"):
+    for smell in ("api_key", "apikey", "secret", "password", "bearer"):
         assert smell not in data, f"config.yaml carries {smell!r} in its data"
+
+    # A key, not the letters. `sk-` as a bare substring matches `ffiec-risk-ach`, which is a
+    # source_id in source_topics -- the scanner flagged it as a committed credential. An OpenAI
+    # key is the prefix followed by a long opaque run, and that is what to look for.
+    assert not re.search(r"\bsk-[A-Za-z0-9_-]{16,}", data), "config.yaml carries an API key"
 
 
 # --- 2. pairs that must not contradict each other ------------------------------------------
