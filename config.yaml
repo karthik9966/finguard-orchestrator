@@ -37,11 +37,20 @@ retrieval:
 # Detection -- LLD §2.6
 # ---------------------------------------------------------------------------------------------
 detection:
-  # The observation window every detector shares, in days. 7 is inherited from the path
-  # detector's MAX_PATH_GAP_DAYS, where it was chosen because SAML-D laundering chains run
-  # 10-15 hops inside a single month. NOTE: fan-in and fan-out had no window at all before the
-  # migration, so applying one to them is a behaviour change to watch in the recall harness.
-  window_days: 7
+  # The observation window every detector shares, in days.
+  #
+  # Was 7, inherited from the path detector's MAX_PATH_GAP_DAYS, with a note that applying a
+  # window to fan-in and fan-out was "a behaviour change to watch in the recall harness". The
+  # harness watched, and 7 was too tight: SAML-D plants its clusters across 9-10 days, so a
+  # 7-day window cannot hold one. Measured across the four dev batches:
+  #
+  #     window  7d -> 85% recall, 19 candidates
+  #     window 10d -> 96% recall, 20 candidates
+  #     window 14d -> 99% recall, 20 candidates
+  #
+  # Recall rises 14 points for one extra candidate, so the window was the binding constraint and
+  # the amount band was not -- widening the band from 0.2 to 0.7 moved recall not at all at 7d.
+  window_days: 14
 
   structuring:
     # US monitored thresholds. $10,000 is the CTR filing threshold (31 CFR 1010.311); $3,000 is
@@ -55,10 +64,23 @@ detection:
     min_count: 3          # fewer than 3 sub-threshold transfers is not a pattern
     min_aggregate_multiple: 1.0   # the group must total at least T to be worth reporting
 
+  # 3 was inherited from MIN_CLUSTER_WIRES, on the grounds that 4 "lost Layered_Fan_Out
+  # entirely" -- a typology PRD §2 now excludes, so that reason no longer applies. Measured
+  # across the dev batches and the 10,000-message batch:
+  #
+  #     min  3 -> 99% recall,  20 dev candidates, 729 on the 10k batch
+  #     min  4 -> 99% recall,  19 dev candidates, 304
+  #     min  5 -> 96% recall,  17 dev candidates, 119
+  #     min  6 -> 96% recall,  17 dev candidates,  41
+  #
+  # 4 keeps recall whole and more than halves the volume at scale. Going further buys a much
+  # shorter list for three points of recall, and in AML a miss is a regulatory failure while a
+  # false alarm costs an analyst minutes -- so the trade is left here, with the curve recorded
+  # so it can be made differently on evidence.
   fan_in:
-    min_sources: 3        # inherited from MIN_CLUSTER_WIRES; 4 lost Layered_Fan_Out entirely
+    min_sources: 4
   fan_out:
-    min_targets: 3
+    min_targets: 4
   cycle:
     min_hops: 3
     max_length: 25

@@ -269,7 +269,11 @@ def test_every_shimmed_constant_matches_the_file():
     assert state.CONFIDENCE_THRESHOLD == config.reasoning.confidence_threshold
     assert state.MAX_REFINEMENTS == config.reasoning.max_loops
     assert state.HIGH_RISK_CONFIDENCE == config.reasoning.high_risk_min_confidence
-    assert detectors.MIN_CLUSTER_WIRES == config.detection.fan_in.min_sources
+    # detectors.MIN_CLUSTER_WIRES is deliberately absent. Phase 0 mapped it onto
+    # detection.fan_in.min_sources assuming they meant the same thing; Phase 3 showed they do
+    # not -- one counts wires in an unwindowed cluster, the other distinct counterparties inside
+    # a window. They now hold different values on purpose, and asserting equality would force
+    # the wrong one on whichever module lost the argument.
     assert detectors.MIN_PATH_HOPS == config.detection.cycle.min_hops
     assert detectors.MAX_PATH_GAP_DAYS == config.detection.window_days
     assert detectors.MAX_PATH_LENGTH == config.detection.cycle.max_length

@@ -50,7 +50,15 @@ PATH = "path"
 MAGNITUDE = "magnitude"
 
 # Three is the floor at which a run is a run rather than a coincidence, and it is also the
-# smallest cluster pdf_generator.py plants. Raising it to 4 loses Layered_Fan_Out entirely.
+# smallest cluster pdf_generator.py plants.
+#
+# Deliberately **not** read from `detection.fan_in.min_sources` any more. Phase 0 mapped the two
+# onto one key on the assumption they meant the same thing; Phase 3 showed they do not. This
+# counts *wires in a cluster* with no window at all; the new detector counts *distinct
+# counterparties inside a window*, where 4 is right and 3 returns 729 candidates on a 10,000-
+# message batch. Pointing this at the new value breaks three of this module's own tests.
+#
+# Frozen at 3 until Phase 5 deletes the module.
 MIN_CLUSTER_WIRES = 3
 
 # A chain of two wires is just a payment being passed on. Three hops is where "money is moving
