@@ -129,49 +129,22 @@ def _model(env_var: str, default: str, **kwargs):
 
 
 def escalate(failure: MalformedMessage) -> Wire | None:
-    """§4.2's Extraction Node, demoted to a fallback for the messages regex refused.
+    """§4.2's extraction fallback, now a shim over `ingestion.batch`.
 
-    Returns None rather than raising: one unreadable message must not cost the other 219.
+    Ingestion is not a graph concern, so the real implementation moved to
+    `src/ingestion/batch.py` where the quarantine report has a home Phase 6 can surface. This
+    keeps `parse_node` compiling until Phase 5 removes its last caller.
+
+    Returns None rather than raising: one unreadable message must not cost the other 499.
     """
-    model = _model("EXTRACTION_MODEL", "gpt-4o-mini").with_structured_output(
-        prompts.ExtractedWire
-    )
-    try:
-        extracted = model.invoke(
-            [
-                ("system", prompts.EXTRACTION_SYSTEM),
-                ("user", prompts.EXTRACTION_USER.format(reason=failure.reason, raw=failure.raw)),
-            ],
-            # No state to draw on -- a rescue is per message, not per batch. The reference and
-            # the reason are what make a fallback span searchable at all.
-            config={
-                "tags": ["node:extraction_fallback"],
-                "metadata": {"node": "extraction_fallback", "reference": failure.reference,
-                             "reason": failure.reason},
-            },
-        )
-        from datetime import date
+    from src.ingestion.batch import llm_extract
+    from src.utils.swift_parser import to_wire
 
-        year, month, day = (int(part) for part in extracted.value_date.split("-")) # type: ignore
-        return Wire(
-            reference=extracted.reference, # type: ignore
-            value_date=date(year, month, day),
-            currency=extracted.currency, # type: ignore
-            amount=Decimal(extracted.amount), # type: ignore
-            sender_account=extracted.sender_account, # type: ignore
-            sender_name=extracted.sender_name, # type: ignore
-            sender_address="",
-            sender_bic=extracted.sender_bic, # type: ignore
-            sender_country=extracted.sender_bic[4:6], # type: ignore
-            receiver_account=extracted.receiver_account, # type: ignore
-            receiver_name=extracted.receiver_name, # type: ignore
-            receiver_address="",
-            receiver_bic=extracted.receiver_bic, # type: ignore
-            receiver_country=extracted.receiver_bic[4:6], # type: ignore
-            bank_operation_code="CRED",
-        )
+    try:
+        record = llm_extract(failure)
     except Exception:  # noqa: BLE001 - a failed rescue is reported, never guessed at
         return None
+    return to_wire(record) if record is not None else None
 
 
 def parse_node(state: AgentState) -> dict[str, Any]:

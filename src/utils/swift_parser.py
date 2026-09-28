@@ -28,9 +28,11 @@ import argparse
 import json
 import re
 from dataclasses import asdict, dataclass, field
-from datetime import date
+from datetime import date, datetime, time, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+
+from src.models import TransactionRecord
 
 # A tag is two digits and an optional letter, anchored at the start of a line. Anything else
 # inside a message is a continuation of whichever tag is currently open -- which is how
@@ -316,6 +318,85 @@ def parse_message(lines: list[str], ordinal: int) -> Wire:
         )
     except ValueError as error:
         raise fail(str(error)) from None
+
+
+# --- the new contract (Phase 2) -------------------------------------------------------
+#
+# `TransactionRecord` is what detection and the model see from Phase 5 onward. `Wire` stays until
+# then, with `to_wire()` below, so `detectors.py` keeps compiling through the additive phases --
+# the migration's promise is a green suite at the end of every phase, and converting every caller
+# in one step is what would break it.
+
+# `:72:` carries the payment type and the wall-clock time the generator rendered:
+# "/INS/CHEQUE 04:22:05". Without it a record is midnight, and every detector works on a window.
+_INSTRUCTION_TIME = re.compile(r"\b(\d{2}):(\d{2}):(\d{2})\b")
+
+
+def instruction_time(instruction: str) -> time:
+    match = _INSTRUCTION_TIME.search(instruction or "")
+    if match is None:
+        return time(0, 0, 0)
+    hour, minute, second = (int(part) for part in match.groups())
+    return time(hour, minute, second)
+
+
+def to_record(wire: Wire) -> TransactionRecord:
+    """A parsed wire as the standard contract.
+
+    The timestamp is timezone-aware because `TransactionRecord` requires it: a naive timestamp
+    cannot be compared across a batch that crosses a DST boundary, and every detector is a time
+    window. `:32A:` gives only a date, so `:72:`'s time supplies the rest.
+    """
+    moment = datetime.combine(
+        wire.value_date, instruction_time(wire.instruction), tzinfo=timezone.utc
+    )
+    return TransactionRecord(
+        txn_ref=wire.reference,
+        sender_account=wire.sender_account,
+        receiver_account=wire.receiver_account,
+        amount=wire.amount,
+        currency=wire.currency,
+        timestamp=moment,
+        sender_country=wire.sender_country,
+        receiver_country=wire.receiver_country,
+        # `:72:` is "/INS/<type> <time>"; the type is the instrument.
+        instrument=(wire.instruction.split("/INS/")[-1].split()[0] if "/INS/" in wire.instruction
+                    else wire.bank_operation_code or "UNKNOWN"),
+        txn_type=wire.bank_operation_code or None,
+        # Attacker-controlled free text. It reaches the candidate and the grounding context on
+        # purpose -- Evaluation Design §5's injection fixture tests nothing if it does not -- and
+        # redaction covers it before any external call.
+        memo=wire.memo,
+        extraction_method="deterministic",
+    )
+
+
+def to_wire(record: TransactionRecord) -> Wire:
+    """The reverse adapter, so `detectors.py` keeps running until Phase 5 replaces it.
+
+    Lossy by construction: a `TransactionRecord` carries no BICs, names or addresses, because
+    nothing downstream of detection needs them. The fields a detector actually reads -- accounts,
+    amount, currency, date, countries -- all survive.
+    """
+    return Wire(
+        reference=record.txn_ref,
+        value_date=record.timestamp.date(),
+        currency=record.currency,
+        amount=record.amount,
+        sender_account=record.sender_account,
+        sender_name="",
+        sender_address="",
+        sender_bic="",
+        sender_country=record.sender_country,
+        receiver_account=record.receiver_account,
+        receiver_name="",
+        receiver_address="",
+        receiver_bic="",
+        receiver_country=record.receiver_country,
+        bank_operation_code=record.txn_type or "",
+        memo=record.memo,
+        instruction=record.instrument,
+    )
 
 
 def parse_batch(path: Path | str, *, strict: bool = False) -> Batch:

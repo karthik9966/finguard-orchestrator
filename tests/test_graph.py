@@ -30,6 +30,20 @@ needs_ledger = pytest.mark.skipif(
     not BATCH.exists(), reason="run: uv run python -m src.utils.pdf_generator"
 )
 
+
+def batch_size(path: Path) -> int:
+    """How many messages a batch declares.
+
+    Read from the statement rather than pinned: Phase 2 regenerated the ledgers from 220-message
+    batches to ~500, and a literal here was a real assertion right up until it became failing
+    arithmetic about a corpus that no longer exists.
+    """
+    for line in path.with_suffix(".txt").read_text().splitlines():
+        if line.startswith("Messages in batch"):
+            return int(line.split(":")[1])
+    raise AssertionError(f"{path.name} declares no message count")
+
+
 CLAUSE = "14.2.3.Guidance.1."
 CHUNK_ID = "obliqa:1:14.2.3.Guidance.1.:a3f9c210"
 
@@ -130,9 +144,9 @@ def sample_candidates():
 def test_parse_node_reads_the_batch_without_a_model(monkeypatch):
     monkeypatch.setattr(nodes, "_model", lambda *a, **k: pytest.fail("PARSE must not call a model"))
     update = nodes.parse_node(initial_state(str(BATCH)))
-    assert len(update["wires"]) == 220
+    assert len(update["wires"]) == batch_size(BATCH)
     assert update["extraction_failures"] == []
-    assert update["extracted_entities"]["parsed_messages"] == 220
+    assert update["extracted_entities"]["parsed_messages"] == batch_size(BATCH)
     assert update["extracted_entities"]["statement_reference"] == "NPB-LOG-2023-06"
 
 
@@ -153,7 +167,7 @@ def test_a_refused_message_is_escalated_to_the_model(monkeypatch, tmp_path):
     update = nodes.parse_node(initial_state(str(corrupted)))
 
     assert len(escalations) == 1, "exactly the refused message is escalated"
-    assert len(update["wires"]) == 219
+    assert len(update["wires"]) == batch_size(BATCH) - 1
     assert update["extraction_failures"][0]["rescued_by_model"] is False
     assert update["extracted_entities"]["unreadable_messages"] == 1
 

@@ -185,6 +185,11 @@ CHAINED = "chained"        # the pattern is a path: A -> B -> C -> A
 SINGLE_WIRE = "single_wire"  # the pattern IS one transaction; the signal is the amount
 
 TYPOLOGY_SHAPE = {
+    # Explicit rather than falling through to the ANCHORED default. Both are in scope per PRD §2,
+    # and the two detectors that matter most should not depend on what `shape_of` happens to do
+    # with an unknown label.
+    "Fan_In": ANCHORED,
+    "Fan_Out": ANCHORED,
     "Cycle": CHAINED,
     "Over-Invoicing": SINGLE_WIRE,
     "Single_large": SINGLE_WIRE,
@@ -196,18 +201,33 @@ def shape_of(typology: str) -> str:
     return TYPOLOGY_SHAPE.get(typology, ANCHORED)
 
 
-# Typologies the blueprint calls out by name are seeded first when picking monthly cases.
+# SAML-D labels that map onto the five in-scope patterns (PRD §2), seeded first when picking
+# monthly cases.
+#
+# This list was the old blueprint's, and it named the wrong things: Deposit-Send, Gather-Scatter,
+# Layered_Fan_In/Out and Over-Invoicing are all *excluded* by PRD §2, while plain Fan_In and
+# Fan_Out -- two of the five detectors -- were absent entirely. Regenerating with the old list
+# produced ledgers in which three of five detectors had nothing to find.
+#
+# Measured in 2023-05..09: Structuring 673 · Smurfing 347 · Fan_Out 145 · Cycle 139 ·
+# Fan_In 137 · Scatter-Gather 122. Every one is available.
 PRIORITY_TYPOLOGIES = [
-    "Structuring",
-    "Smurfing",
-    "Deposit-Send",
-    "Cycle",
-    "Scatter-Gather",
-    "Gather-Scatter",
-    "Layered_Fan_In",
-    "Layered_Fan_Out",
-    "Over-Invoicing",
+    "Structuring",      # -> structuring
+    "Smurfing",         # -> structuring (many small deposits by many parties)
+    "Fan_In",           # -> fan_in
+    "Fan_Out",          # -> fan_out
+    "Cycle",            # -> cycle
+    "Scatter-Gather",   # -> scatter_gather
 ]
+
+# Labelled suspicious, but out of scope per PRD §2. Kept in the ledgers as *unflagged* context so
+# precision is measurable against activity that genuinely looks odd -- never planted as a case,
+# because a detector is not expected to find them and recall must not be diluted by them.
+OUT_OF_SCOPE_TYPOLOGIES = frozenset({
+    "Cash_Withdrawal", "Deposit-Send", "Layered_Fan_In", "Layered_Fan_Out", "Stacked Bipartite",
+    "Behavioural_Change_1", "Behavioural_Change_2", "Bipartite", "Gather-Scatter", "Single_large",
+    "Over-Invoicing",
+})
 
 
 # --- synthetic identities ------------------------------------------------------------
@@ -347,6 +367,26 @@ class SliceConfig:
     cases_per_month: int
     min_cluster: int
     seed: int
+    # Which named emission this is. Carried so a caller can ask for "dev" rather than restating
+    # four numbers, and so the profile that produced a corpus is recoverable from the call.
+    profile: str = "dev"
+
+
+# The emissions Phase 2 calls for. `dev` is three working batches plus a clean control; `large`
+# is the one batch big enough to measure Evaluation Design's five-minute KPI against, and the
+# detectors meet it now rather than in Phase 8.
+#
+# ~500 rather than the old 220: five typologies need room to plant without crowding each other,
+# where 220 was sized for four geometric primitives.
+PROFILES = {
+    "dev": [
+        SliceConfig("2023-06", 3, 500, 3, 3, 20260814, "dev"),
+        SliceConfig("2023-05", 1, 500, 0, 3, 20260814, "dev-control"),
+    ],
+    # 2023-04: outside the dev window, and inside SAML-D's range. The corpus ends at 2023-08,
+    # so a month after that silently produces nothing.
+    "large": [SliceConfig("2023-04", 1, 10_000, 12, 3, 20260814, "large")],
+}
 
 
 def load_window(csv: Path, periods: list[pd.Period]) -> pd.DataFrame:
@@ -426,7 +466,14 @@ def select_cases(
     if present:
         offset = rotation % len(present)
         present = present[offset:] + present[:offset]
-    others = sorted(set(suspicious.Laundering_type) - set(present))
+    # Anything left over that is still in scope. Out-of-scope typologies are never planted as a
+    # case: PRD §2 excludes them, so a detector is not expected to find them, and seeding one
+    # dilutes recall with activity the system is right to ignore. The old list did plant them --
+    # Deposit-Send, Layered_Fan_In and Over-Invoicing were all in the ledgers -- which is why
+    # three of the five in-scope detectors had nothing to find.
+    others = sorted(
+        set(suspicious.Laundering_type) - set(present) - OUT_OF_SCOPE_TYPOLOGIES
+    )
     rng.shuffle(others)
 
     selected_indices: list[pd.Index] = []
@@ -534,6 +581,64 @@ def build_month_within_budget(
     raise AssertionError("unreachable: the wanted == 1 branch always returns")
 
 
+
+# --- re-domiciling: one US institution's ledger (Phase 2) ------------------------------
+#
+# The corpus is US law now, and a finding citing 31 CFR 1020.320 against a GB->GB wire is
+# incoherent. SAML-D cannot supply US traffic: it is 96.6% UK-origin, and only 36 suspicious
+# USA-sender rows exist in all 9.5M -- none of them fan-in, fan-out or smurfing. So the anchor
+# leg is re-domiciled instead, and the counterparties keep their SAML-D countries so the
+# cross-border corridors stay real.
+#
+# This must happen on the frame, before rendering: `iso_country` and `iso_currency` raise on an
+# unmapped value and `mt103` calls them while it renders.
+
+HOME_LOCATION = "USA"
+# SAML-D's own spelling; CURRENCY_ISO maps it to USD.
+HOME_CURRENCY = "US dollar"
+
+
+def institution_accounts(frame: pd.DataFrame) -> set[int]:
+    """The accounts this bank holds -- the anchor of each planted cluster.
+
+    ``anchor_side`` already decides which endpoint concentrates a typology, and that endpoint is
+    exactly the account the institution's analyst is looking at. Reusing it here keeps the
+    domicile consistent with the shape the cluster was selected for.
+    """
+    ours: set[int] = set()
+    flagged = frame[frame.Is_laundering == 1]
+    for _, cases in flagged.groupby("Laundering_type"):
+        if cases.empty:
+            continue
+        ours.update(int(account) for account in cases[anchor_side(cases)])
+    return ours
+
+
+def redomicile(frame: pd.DataFrame) -> pd.DataFrame:
+    """Put one leg of every message at the US institution, and denominate in USD.
+
+    Amounts are **relabelled, not converted**. SAML-D's values were never really pounds, and the
+    structuring detector keys on the $10,000 CTR and $3,000 recordkeeping thresholds: converting
+    at an FX rate would lift a cluster sitting just under 10,000 straight over the threshold and
+    stop it being structuring at all. Relabelling preserves the relative magnitudes that make a
+    cluster a cluster, and leaves it where the rule can see it.
+    """
+    frame = frame.copy()
+    ours = institution_accounts(frame)
+
+    sender_is_ours = frame.Sender_account.astype("int64").isin(ours)
+    receiver_is_ours = frame.Receiver_account.astype("int64").isin(ours)
+    # Every message is on this bank's ledger, so one leg is always ours. Where the row belongs to
+    # no planted cluster, the sender is the customer by default.
+    take_sender = sender_is_ours | ~receiver_is_ours
+
+    frame.loc[take_sender, "Sender_bank_location"] = HOME_LOCATION
+    frame.loc[~take_sender, "Receiver_bank_location"] = HOME_LOCATION
+    frame["Payment_currency"] = HOME_CURRENCY
+    frame["Received_currency"] = HOME_CURRENCY
+    return frame
+
+
 def assign_references(frame: pd.DataFrame, counter: int) -> tuple[pd.DataFrame, int]:
     """:20: is limited to 16 characters -- FGO + YYMMDD + 5-digit sequence fits in 14."""
     references = []
@@ -580,7 +685,7 @@ def generate(config: SliceConfig, *, append: bool = False) -> pd.DataFrame:
             print(f"  {period}: no rows, skipped")
             continue
 
-        frame = build_month_within_budget(month, config, period, rotation)
+        frame = redomicile(build_month_within_budget(month, config, period, rotation))
         frame, counter = assign_references(frame, counter)
 
         text = render_text(period, frame)
@@ -594,6 +699,14 @@ def generate(config: SliceConfig, *, append: bool = False) -> pd.DataFrame:
         print(
             f"  {period}: {len(frame):>4} messages, {flagged:>3} flagged "
             f"({flagged / len(frame):.1%}) -- {', '.join(typologies)}"
+        )
+
+    if not labels:
+        # Every requested month was empty. Concatenating nothing raises deep inside pandas with
+        # "No objects to concatenate", which says nothing about the cause -- and the cause is
+        # almost always a month outside SAML-D's 2022-10..2023-08 range.
+        raise SystemExit(
+            f"no rows for {periods[0]}..{periods[-1]} -- SAML-D covers 2022-10 to 2023-08"
         )
 
     ledger_labels = pd.concat(labels, ignore_index=True)
@@ -611,6 +724,10 @@ def generate(config: SliceConfig, *, append: bool = False) -> pd.DataFrame:
 def main() -> int:
     assert __doc__ is not None
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--profile", choices=sorted(PROFILES),
+        help="emit a named batch set instead of one ad-hoc slice",
+    )
     parser.add_argument("--start", default="2023-06", help="first month, YYYY-MM")
     parser.add_argument("--months", type=int, default=3)
     parser.add_argument("--max-messages", type=int, default=220, help="messages per monthly log")
@@ -624,6 +741,14 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.profile:
+        # The control batch is appended so it joins the labels rather than replacing them; the
+        # first config in a profile clears the ledger, the rest add to it.
+        for index, config in enumerate(PROFILES[args.profile]):
+            print(f"\n[{config.profile}] {config.months} x {config.max_messages} messages")
+            generate(config=config, append=args.append or index > 0)
+        return 0
+
     generate(
         append=args.append,
         config=SliceConfig(
@@ -633,6 +758,7 @@ def main() -> int:
             cases_per_month=args.cases_per_month,
             min_cluster=args.min_cluster,
             seed=args.seed,
+            profile="adhoc",
         )
     )
     return 0

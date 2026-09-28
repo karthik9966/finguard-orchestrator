@@ -86,7 +86,11 @@ def test_a_batch_is_accepted_and_audited_in_the_background(client):
 
     body = response.json()
     assert body["status"] == "running"
-    assert body["wires"] == 220, "validated during upload, before the audit ran"
+    # Derived, not pinned -- the batch was 220 messages before Phase 2 regenerated the ledgers.
+    declared = int(
+        next(l for l in BATCH.read_text().splitlines() if l.startswith("Messages in batch")).split(":")[1]
+    )
+    assert body["wires"] == declared, "validated during upload, before the audit ran"
     assert body["poll"] == f"/audit/{body['audit_id']}"
 
     result = client.get(body["poll"]).json()

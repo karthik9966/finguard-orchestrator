@@ -96,6 +96,46 @@ class TransactionRecord(BaseModel):
         return self.sender_country != self.receiver_country
 
 
+class QuarantinedMessage(BaseModel):
+    """A message that neither the parser nor the fallback could read.
+
+    Kept with its raw text so a human can see what was lost. A quarantined message is a message
+    the audit did not see, which is a different thing from a message it saw and cleared -- and
+    the difference has to be visible, or a batch that half-parsed reports as a clean batch.
+    """
+
+    ordinal: int = Field(ge=1, description="Position in the batch, for a message with no ref")
+    reference: str | None = None
+    reason: str = Field(min_length=1)
+    raw: str = ""
+    fallback_attempted: bool = False
+
+
+class ValidationReport(BaseModel):
+    """What ingestion accepted, rescued and refused."""
+
+    batch: str = ""
+    declared: int | None = Field(default=None, description="The count the statement claims")
+    parsed: int = 0
+    rescued: int = Field(default=0, description="Read by the fallback after the parser refused")
+    quarantined: list[QuarantinedMessage] = Field(default_factory=list)
+
+    @property
+    def complete(self) -> bool:
+        """Every message the statement declared came back as a record."""
+        return not self.quarantined and (self.declared is None or self.parsed == self.declared)
+
+    def summary(self) -> str:
+        parts = [f"{self.parsed} parsed"]
+        if self.declared is not None and self.declared != self.parsed:
+            parts[0] = f"{self.parsed} of {self.declared} parsed"
+        if self.rescued:
+            parts.append(f"{self.rescued} rescued by the fallback")
+        if self.quarantined:
+            parts.append(f"{len(self.quarantined)} quarantined")
+        return " · ".join(parts)
+
+
 # =============================================================================================
 # Detection
 # =============================================================================================
