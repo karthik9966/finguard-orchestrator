@@ -339,7 +339,47 @@ class VectorStoreClient:
         return {"tier": dict(tiers), "authority": dict(authorities), "total": collection.count()}
 
 
-@lru_cache(maxsize=1)
+BENCHMARK_COLLECTION = "obliqa_benchmark"
+
+
+def build_benchmark(backend_name: str = "minilm", *, rebuild: bool = False) -> dict:
+    """Index ObliQA into its own collection, away from the citable corpus.
+
+    ObliQA is ADGM law and the new design puts non-US rulebooks out of scope, but the 2,786
+    labelled questions are the only ground truth this project has for retrieval quality -- the
+    reranker was adopted on them, and hit@1 45.2% -> 55.6% is a regression floor. So it stays,
+    fenced off: `rule_chunks` cannot serve an ADGM clause as a citation, and the benchmark keeps
+    reproducing.
+    """
+    source = chunk_path(backend_name)
+    if not source.exists():
+        raise SystemExit(f"{source.name} missing -- run: uv run finguard-chunk --backend {backend_name}")
+    records = [
+        record
+        for line in source.read_text().splitlines()
+        if (record := json.loads(line))["corpus"] == "obliqa"
+    ]
+    if not records:
+        raise SystemExit(f"{source.name} holds no ObliQA chunks")
+
+    store = VectorStoreClient(BENCHMARK_COLLECTION, backend_name=backend_name)
+    if rebuild:
+        try:
+            _client().delete_collection(BENCHMARK_COLLECTION)
+            print(f"  dropped existing collection {BENCHMARK_COLLECTION!r}")
+        except Exception:  # noqa: BLE001 - absent collection is the normal case
+            pass
+
+    with get_backend(backend_name) as backend:
+        print(f"  embedding {len(records):,} ObliQA chunks with {backend.model_id} ...")
+        vectors = backend.encode([r["text"] for r in records])
+
+    store.upsert(records, vectors)
+    total = store.counts()["total"]
+    print(f"  {BENCHMARK_COLLECTION}: {total:,} chunks")
+    return {"collection": BENCHMARK_COLLECTION, "chunks": total}
+
+
 def build_rules(backend_name: str = "minilm", *, rebuild: bool = False) -> dict:
     """Index the citable US corpus into `rule_chunks`.
 
@@ -523,6 +563,10 @@ def main() -> int:
     parser.add_argument(
         "--rule-stats", action="store_true", help=f"chunk counts per tier in {RULE_COLLECTION!r}"
     )
+    parser.add_argument(
+        "--benchmark", action="store_true",
+        help=f"build {BENCHMARK_COLLECTION!r} -- ObliQA, fenced off from the citable corpus",
+    )
     parser.add_argument("--query", help="run a retrieval and print the hits")
     parser.add_argument("--tier", type=int, nargs="*", default=None)
     parser.add_argument("-k", type=int, default=DEFAULT_K)
@@ -531,6 +575,10 @@ def main() -> int:
     try:
         if args.rules:
             build_rules(args.backend, rebuild=args.rebuild)
+            return 0
+
+        if args.benchmark:
+            build_benchmark(args.backend, rebuild=args.rebuild)
             return 0
 
         if args.rule_stats:

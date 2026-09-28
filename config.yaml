@@ -141,11 +141,48 @@ ingestion:
 # before then: the resolve test fails loudly on an empty map.
 # ---------------------------------------------------------------------------------------------
 pattern_to_obligations:
-  structuring: []
-  fan_in: []
-  fan_out: []
-  cycle: []
-  scatter_gather: []
+  # § 1020.320(a) is the SAR duty itself and backs every typology: whatever shape the activity
+  # took, that is the obligation a filing rests on. (a)(2)(ii) and (a)(2)(iii) are the two limbs
+  # that describe *why* -- designed to evade a requirement, and no apparent lawful purpose.
+  structuring:
+    # The prohibition itself, its structuring limb, and the $10,000 CTR duty it exists to evade.
+    - {source_id: 31usc5324,     section_ref: "§ 5324"}
+    - {source_id: 31usc5324,     section_ref: "§ 5324(a)(3)"}
+    - {source_id: 31cfr1010.311, section_ref: "§ 1010.311"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(ii)"}
+
+  # Many senders into one account. The recordkeeping duty applies because the legs are transfers,
+  # and the no-lawful-purpose limb is what makes the aggregate reportable.
+  fan_in:
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(iii)"}
+    - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(e)"}
+    - {source_id: 31cfr1020.210, section_ref: "§ 1020.210(a)"}
+
+  # One account paying many. Same duties, and the CDD programme requirement is what should have
+  # established whether this profile was expected.
+  fan_out:
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(iii)"}
+    - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(e)"}
+    - {source_id: 31cfr1020.210, section_ref: "§ 1020.210(a)"}
+
+  # Funds returning to their origin through intermediaries. Layering has no economic purpose by
+  # construction, which is (a)(2)(iii); the travel rule is what makes the hops traceable at all.
+  cycle:
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(iii)"}
+    - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(e)"}
+    - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(f)"}
+
+  # Dispersal then re-collection. Both evasion limbs apply: the split is designed to evade, and
+  # the reassembly has no apparent purpose.
+  scatter_gather:
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(ii)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(iii)"}
+    - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(e)"}
 
 # ---------------------------------------------------------------------------------------------
 # topic_tags per source (LLD §3.2). Inherited by every chunk cut from that source, and the

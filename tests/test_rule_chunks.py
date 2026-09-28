@@ -15,6 +15,7 @@ import pytest
 from src.config import get_config
 from src.ingestion.loader import chunk_identity, rules_path, section_stem, us_artifacts
 from src.ingestion.store import (
+    BENCHMARK_COLLECTION,
     RULE_COLLECTION,
     VectorStoreClient,
     VectorStoreUnavailable,
@@ -178,3 +179,51 @@ def test_counts_are_reported_per_tier_and_authority(store_client):
     assert counts["total"] > 500
     assert set(counts["tier"]) == {"statute", "regulation", "guidance"}
     assert set(counts["authority"]) == {"binding", "illustrative"}
+
+
+# --- the benchmark corpus is fenced off (Phase 1c) ---------------------------------------
+
+
+def test_obliqa_is_not_in_the_citable_corpus(store_client):
+    """ADGM law is out of scope for citations, but its 2,786 labelled questions are the only
+    retrieval ground truth this project has. So it lives in its own collection: the benchmark
+    keeps reproducing and rule_chunks cannot serve an ADGM clause as authority."""
+    metadatas = store_client._collection().get(include=["metadatas"])["metadatas"]
+    assert not [m for m in metadatas if str(m.get("source_id", "")).startswith("obliqa")]
+
+
+def test_the_two_collections_do_not_overlap():
+    from src.ingestion.store import VectorStoreClient
+
+    benchmark = VectorStoreClient(BENCHMARK_COLLECTION)
+    try:
+        obliqa = benchmark._collection().get(include=["metadatas"])
+    except Exception:  # noqa: BLE001
+        pytest.skip("obliqa_benchmark not built -- run: uv run finguard-store --benchmark")
+
+    assert obliqa["ids"], "benchmark collection is empty"
+    assert {m.get("corpus") for m in obliqa["metadatas"]} == {"obliqa"}
+
+
+def test_the_recorded_retrieval_numbers_name_the_model_that_produced_them():
+    """hit@1 45.2% -> 55.6% only reproduces for all-MiniLM-L6-v2, and Phase 0 made the model a
+    config value. A result recorded without its model is a number nobody can check."""
+    import json as _json
+
+    path = Path(__file__).resolve().parents[1] / "data" / "processed" / "retrieval_benchmark.json"
+    if not path.exists():
+        pytest.skip("no benchmark run recorded -- run: uv run finguard-benchmark")
+
+    runs = _json.loads(path.read_text())
+    minilm = [r for r in runs if r["backend"] == "minilm"]
+    assert minilm, "no minilm arm recorded"
+    assert all(r["model"] for r in minilm), "a recorded result must name its embedding model"
+
+    latest = minilm[-1]
+    assert latest["model"] == "all-MiniLM-L6-v2"
+    assert latest["hit_at"]["1"] == pytest.approx(0.452, abs=0.005)
+    if "hit_at_reranked" in latest:
+        assert latest["hit_at_reranked"]["1"] == pytest.approx(0.556, abs=0.005)
+        assert latest["hit_at_reranked"]["15"] == latest["hit_at"]["15"], (
+            "a reranker reorders and cannot add -- hit@15 must be untouched"
+        )
