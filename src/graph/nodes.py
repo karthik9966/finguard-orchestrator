@@ -484,7 +484,7 @@ class CriticNode:
     def _evidence_hint(candidate: Candidate) -> str:
         from src.detection.query import QueryConstructor
 
-        return QueryConstructor().build(candidate)
+        return QueryConstructor().indicator_query(candidate)
 
 
 def route_after_critic(state: AgentState) -> str:

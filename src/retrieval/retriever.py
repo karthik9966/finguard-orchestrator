@@ -145,7 +145,10 @@ class TierAwareRetriever:
         """
         notes = RetrievalNotes()
         obligations = self.obligations_for(self.queries.key(candidate), notes)
-        query_text = hint.strip() if hint and hint.strip() else self.queries.build(candidate)
+        query_text = (
+            hint.strip() if hint and hint.strip()
+            else self.queries.indicator_query(candidate)
+        )
         indicators = self.indicators_for(query_text, notes)
         return RetrievalResult(obligations=obligations, indicators=indicators), notes
 

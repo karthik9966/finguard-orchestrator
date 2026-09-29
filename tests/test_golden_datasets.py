@@ -32,7 +32,11 @@ def test_all_six_corpora_are_present():
     assert corpora.summary() == {
         "labeled_patterns": 75,
         "benign_lookalikes": 20,
-        "complex_queries": 10,
+        # Six rather than Eval Design's "~10", and the reason is a finding about the system:
+        # `indicator_query` is a function of pattern type and threshold, so there are exactly six
+        # distinguishable indicator queries. Ten records meant four duplicate measurements -- the
+        # same query text scored twice under different ids.
+        "complex_queries": 6,
         "malformed_inputs": 10,
         "injected_memos": 5,
         "clean_batch": 1,
@@ -183,8 +187,8 @@ def test_every_curated_indicator_pair_resolves():
     """Pairs, not chunk ids: `chunk_id = hash(source_id, section_ref, version)`, so a literal id goes
     stale on a re-chunk with no error. Phase 1c learned this on the obligation map."""
     queries = corpora.complex_queries(resolve=True)
-    assert len(queries) == 10
-    assert sum(1 for q in queries if q.scored) == 9
+    assert len(queries) == 6
+    assert sum(1 for q in queries if q.scored) == 5
 
 
 def test_the_unscored_query_says_why_it_is_unscored():
@@ -192,7 +196,7 @@ def test_the_unscored_query_says_why_it_is_unscored():
     than the retriever. Excluded explicitly rather than quietly dropped."""
     unscored = [q for q in corpora.complex_queries(resolve=False) if not q.scored]
     assert len(unscored) == 1
-    assert unscored[0].id == "CQ-009"
+    assert unscored[0].id == "CQ-006"
     assert unscored[0].expect_no_indicator is True
     assert "no correct answer exists" in unscored[0].excluded_from_precision
 
@@ -200,3 +204,46 @@ def test_the_unscored_query_says_why_it_is_unscored():
 def test_a_distractor_is_never_the_correct_answer():
     for query in corpora.complex_queries(resolve=False):
         assert query.correct not in query.distractors, query.id
+
+
+# --- the candidates have to be candidates the detectors actually produce -------------------
+
+# What each detector puts in `Candidate.attributes`, read off the detectors themselves. A query set
+# describing attributes nothing emits measures a candidate shape that never occurs -- which is
+# exactly what four of the first ten records did, and what this test exists to stop recurring.
+REAL_ATTRIBUTES = {
+    "structuring": {"anchor", "band", "count", "threshold", "total", "window_days"},
+    "fan_in": {"anchor", "count", "distinct_senders", "total", "window_days"},
+    "fan_out": {"anchor", "count", "distinct_recipients", "total", "window_days"},
+    "cycle": {"anchor", "hops", "retained_fraction", "route", "total", "window_days"},
+    "scatter_gather": {
+        "anchor", "sink", "intermediaries", "fan", "total", "window_days",
+    },
+}
+
+
+def test_every_query_candidate_uses_attributes_a_detector_really_emits():
+    for query in corpora.complex_queries(resolve=False):
+        attributes = set(query.candidate.get("attributes", {}))
+        allowed = REAL_ATTRIBUTES[query.pattern_type]
+        invented = sorted(attributes - allowed)
+        assert not invented, f"{query.id} ({query.pattern_type}) invents {invented}"
+
+
+@needs_corpus
+def test_the_real_attribute_map_matches_the_detectors():
+    """The map above is a copy, so it needs a guard against the detectors changing under it."""
+    from src.detection.base import detect_all
+    from src.ingestion.batch import TransactionBatchIngestor
+
+    seen: dict[str, set[str]] = {}
+    ingestor = TransactionBatchIngestor(fallback=lambda failure: None)
+    for month in ("2023-02", "2022-12"):
+        records, _ = ingestor.ingest([EVAL_LEDGER / f"{month}_private_banking_log.txt"])
+        for candidate in detect_all(records):
+            seen.setdefault(candidate.pattern_type, set()).update(candidate.attributes or {})
+
+    assert seen, "no candidates at all -- the corpus or the detectors are broken"
+    for pattern, keys in seen.items():
+        unexpected = sorted(keys - REAL_ATTRIBUTES[pattern])
+        assert not unexpected, f"{pattern} now also emits {unexpected}; update REAL_ATTRIBUTES"

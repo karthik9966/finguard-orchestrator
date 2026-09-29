@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from src.config import PATTERN_TYPES, get_config
-from src.detection.query import TEMPLATES, QueryConstructor
+from src.detection.query import INDICATOR_TEMPLATES, OBLIGATION_TEMPLATES, QueryConstructor
 from src.ingestion.store import RULE_COLLECTION, VectorStoreClient
 from src.models import Candidate, Citation, RetrievalResult
 from src.retrieval.retriever import (
@@ -43,39 +43,63 @@ def store() -> VectorStoreClient:
 # --- query construction --------------------------------------------------------------------
 
 
-def test_every_pattern_has_a_query_template():
-    assert set(TEMPLATES) == set(PATTERN_TYPES)
+def test_every_pattern_has_a_template_in_both_registers():
+    assert set(OBLIGATION_TEMPLATES) == set(PATTERN_TYPES)
+    assert set(INDICATOR_TEMPLATES) == set(PATTERN_TYPES)
 
 
-def test_a_query_is_phrased_as_a_duty_not_as_a_description():
+def test_an_obligation_query_is_phrased_as_a_duty():
     """The measured lesson: for the same facts the correct clause ranked 11,268th of 12,273 as
     raw detector JSON, 315th as a narrative, and 5th as an obligation-shaped question. Rulebooks
     are written as duties, so a description of events shares no register with them."""
     for pattern in PATTERN_TYPES:
-        text = QueryConstructor().build(candidate(pattern))
+        text = QueryConstructor().obligation_query(candidate(pattern))
         assert any(
             text.startswith(opener)
             for opener in ("obligation to", "duty to", "requirement to")
         ), f"{pattern}: {text[:60]!r}"
 
 
-def test_a_query_names_no_transaction_and_no_amount_from_the_batch():
-    """A query carrying account numbers would retrieve on the digits rather than the duty, and
+def test_an_indicator_query_is_phrased_as_behaviour():
+    """The other half of the same lesson, and the one Phase 8 had to measure to find. Red flags are
+    not duties -- FFIEC Appendix F reads "Customer makes multiple and frequent currency deposits to
+    various accounts that are purportedly unrelated" -- so a duty-shaped question is the wrong
+    register for the only corpus that is actually searched."""
+    for pattern in PATTERN_TYPES:
+        text = QueryConstructor().indicator_query(candidate(pattern))
+        assert not any(
+            text.startswith(opener)
+            for opener in ("obligation to", "duty to", "requirement to")
+        ), f"{pattern} reads as a duty: {text[:60]!r}"
+        assert any(
+            word in text
+            for word in ("customer", "funds", "beneficiaries", "deposits", "transferred")
+        ), f"{pattern}: {text[:60]!r}"
+
+
+def test_neither_query_names_a_transaction_or_an_amount_from_the_batch():
+    """A query carrying account numbers would retrieve on the digits rather than the behaviour, and
     would put customer identifiers into a vector search."""
-    text = QueryConstructor().build(candidate("fan_in", anchor="6123421761", total=91234.5))
-    assert "6123421761" not in text and "91234" not in text
+    subject = candidate("fan_in", anchor="6123421761", total=91234.5)
+    for text in (
+        QueryConstructor().obligation_query(subject),
+        QueryConstructor().indicator_query(subject),
+    ):
+        assert "6123421761" not in text and "91234" not in text
 
 
-def test_a_threshold_match_widens_the_question():
-    plain = QueryConstructor().build(candidate("structuring"))
-    banded = QueryConstructor().build(candidate("structuring", threshold=10000))
-    assert len(banded) > len(plain) and "$10,000" in banded
+def test_a_threshold_match_widens_the_question_in_both_registers():
+    builder = QueryConstructor()
+    for build in (builder.obligation_query, builder.indicator_query):
+        plain = build(candidate("structuring"))
+        banded = build(candidate("structuring", threshold=10000))
+        assert len(banded) > len(plain) and "$10,000" in banded
 
 
 def test_one_query_per_candidate():
     """LLD §2.4. The pre-migration system issued 2-4 and fused them with RRF; that win was on
     semantic discovery of obligations, which the curated map now replaces."""
-    assert isinstance(QueryConstructor().build(candidate()), str)
+    assert isinstance(QueryConstructor().indicator_query(candidate()), str)
     assert get_config().retrieval.multi_query_rrf is False
 
 
