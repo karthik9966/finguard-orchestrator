@@ -216,6 +216,10 @@ reasoning:
   schema_retries: 3
   llm_max_attempts: 3          # tenacity attempts on 429/5xx/timeout
   llm_timeout_seconds: 60
+  # Edges of the matched structure shown to the grounding model (PRD v2 §5.3). Every planted
+  # v2 cluster in the golden corpus has fewer than 30, so the cap bounds tokens on a pathological
+  # candidate without trimming a real one; beyond it the prompt says how many were left out.
+  evidence_edges_in_prompt: 30
   # There is deliberately **no candidate cap**. Measured on the June dev batch (500 messages,
   # 5 candidates), twice:
   #

@@ -25,6 +25,7 @@ import pandas as pd
 import streamlit as st
 
 from src.config import get_settings
+from src.detection import evidence
 from src.ui.client import ApiError, FinGuardClient
 
 st.set_page_config(page_title="FinGuard — Auditor Cockpit", page_icon="⚖️", layout="wide")
@@ -254,6 +255,14 @@ if report.findings:
             f"{finding.status} · {len(finding.candidate.member_txn_refs)} transactions"
         ):
             st.markdown(finding.narrative)
+
+            # PRD v2 §5.3: the matched money-flow structure, so a layered or bipartite finding
+            # reads at a glance rather than as a flat list of transactions.
+            dot = evidence.to_dot(finding.candidate.subgraph)
+            if dot:
+                st.markdown("**Money-flow structure**")
+                st.caption(evidence.describe(finding.candidate))
+                st.graphviz_chart(dot, width="stretch")
 
             if finding.status == "needs_review" and finding.review_notes:
                 st.warning("**Why this needs a human**\n\n" + "\n".join(

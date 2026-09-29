@@ -38,6 +38,7 @@ from pydantic import ValidationError
 
 from src.config import get_config, get_settings
 from src.detection.base import detect_all
+from src.detection import evidence
 from src.detection.graph_engine import build_graph
 from src.graph import prompts
 from src.models import (
@@ -623,9 +624,10 @@ class ReportGenerationNode:
 
         if not findings:
             lines += [
-                f"{records} transaction(s) were screened for the five monitored typologies "
-                "(structuring, fan-in, fan-out, cycle, scatter-gather). No qualifying pattern was "
-                "found, so no obligation was engaged and no model was consulted.",
+                f"{records} transaction(s) were screened for the nine monitored typologies "
+                "(structuring, fan-in, fan-out, cycle, scatter-gather, gather-scatter, "
+                "deposit-send, layered fan-in/out, bipartite). No qualifying pattern was found, so "
+                "no obligation was engaged and no model was consulted.",
             ]
             if quarantined:
                 lines += [
@@ -670,6 +672,8 @@ class ReportGenerationNode:
                 "",
                 f"### {candidate.pattern_type} -- {finding.risk_level} risk "
                 f"({finding.status}, confidence {finding.confidence:.2f})",
+                "",
+                evidence.describe(candidate),
                 "",
                 f"{len(candidate.member_txn_refs)} transaction(s); "
                 f"detection confidence {candidate.detection_confidence:.2f}.",

@@ -35,7 +35,8 @@ from src.config import PatternType
 # Bumped when a stored report's shape changes. It travels inside the report so a reader pulled
 # out of the results store years later can tell what it is looking at -- which is the whole
 # point of Journey 3 (audit-defence lookup).
-SCHEMA_VERSION = "2.0"
+# 2.1: Candidate.subgraph (v2 graph evidence). Additive and optional, so a 2.0 report still reads.
+SCHEMA_VERSION = "2.1"
 
 RiskLevel = Literal["high", "medium", "low"]
 # A report may additionally be rated "none": a clean month is a real, valid answer, not the

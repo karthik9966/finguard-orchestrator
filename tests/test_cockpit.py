@@ -43,6 +43,15 @@ def a_report(run="run-page", *, status="pending_review", quarantined=0) -> Compl
         pattern_type="structuring",
         member_txn_refs=["FGO23060100001", "FGO23060100002"],
         detection_confidence=0.6,
+        subgraph={
+            "nodes": ["4051005512", "7702198834"],
+            "edges": [
+                {"ref": f"FGO2306010000{n}", "source": "4051005512", "target": "7702198834",
+                 "amount": 9400.0 + n, "timestamp": "2023-06-0{n}T09:00:00+00:00",
+                 "payment_kind": "cash_deposit"}
+                for n in (1, 2)
+            ],
+        },
     )
     finding = Finding(
         finding_id=f"f-{run}:{target.candidate_id}",
@@ -161,6 +170,15 @@ def test_a_stored_report_renders_with_its_findings_and_citations(served):
     assert "Compliance review" in body
     assert "just below the $10,000 reporting threshold" in body, "the narrative is on the page"
     assert "§ 1020.320(a)" in body, "the clause it was drafted against is shown with it"
+
+
+def test_a_finding_shows_its_money_flow_structure(served):
+    """PRD v2 §5.3: the matched structure, drawn -- not only a flat list of transactions."""
+    served.save(a_report(), validation=VALIDATION)
+    page = run_page(report_id="rep-run-page")
+    assert not page.exception
+    (chart,) = page.get("graphviz_chart")
+    assert "7702198834" in chart.proto.spec and "cash deposit" in chart.proto.spec
 
 
 def test_the_review_buttons_offered_are_the_ones_the_store_permits(served):

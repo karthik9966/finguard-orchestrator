@@ -346,6 +346,7 @@ class ReasoningConfig(BaseModel):
     schema_retries: int = Field(ge=1)
     llm_max_attempts: int = Field(ge=1)
     llm_timeout_seconds: float = Field(gt=0)
+    evidence_edges_in_prompt: int = Field(ge=0)
 
     @model_validator(mode="after")
     def high_risk_bar_is_not_below_acceptance(self) -> ReasoningConfig:

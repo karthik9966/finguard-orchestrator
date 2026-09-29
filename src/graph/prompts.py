@@ -14,6 +14,8 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from src.models import Candidate, RetrievalResult, RuleChunk
+from src.config import get_config
+from src.detection import evidence
 from src.utils.redaction import redact
 
 # --- A. GroundingNode (temp 0.0, reasoning model) ---------------------------------------
@@ -147,6 +149,13 @@ def render_candidate(candidate: Candidate) -> str:
         f"detection_confidence: {candidate.detection_confidence}",
     ]
     lines += [f"{key}: {value}" for key, value in sorted(attributes.items())]
+    # The structure itself (PRD v2 §5.3), so a multi-hop narrative can say which account paid
+    # which rather than infer it from counts. Redacted like the attributes above.
+    edges = evidence.edge_lines(
+        candidate.subgraph, limit=get_config().reasoning.evidence_edges_in_prompt
+    )
+    if edges:
+        lines += ["structure (one line per transaction):", *(f"  {edge}" for edge in edges)]
     return "\n".join(f"  {line}" for line in lines)
 
 
