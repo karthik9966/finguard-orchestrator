@@ -1,0 +1,89 @@
+[
+  {
+    "id": "CQ-001",
+    "pattern_type": "structuring",
+    "why_hard": "The corpus holds 29 chunks matching threshold/structuring language. The right one turns on what was just below the threshold -- an amount -- not on the complexity of the arrangement or on where the customer kept the cash. Paired with CQ-002, which is the same pattern at the other monitored threshold and has a different correct answer.",
+    "candidate": {
+      "pattern_type": "structuring",
+      "attributes": {"anchor": "6123421761", "threshold": 10000, "band": [8000.0, 10000.0], "count": 4, "total": 36800.0, "window_days": 14}
+    },
+    "correct_indicator": {"source_id": "ffiec-appendix-f", "section_ref": "Other Unusual or Suspicious Customer Activity ¶ 9"},
+    "distractors": [
+      {"source_id": "ffiec-appendix-f", "section_ref": "Trade Finance ¶ 7", "why_wrong": "'structure appears unnecessarily complex' is about deal structure, not amounts below a reporting threshold"},
+      {"source_id": "ffiec-appendix-f", "section_ref": "Efforts to Avoid Reporting or Recordkeeping Requirement ¶ 7", "why_wrong": "same theme, but the fact it turns on is safe-deposit-box access, which this candidate has no evidence of"}
+    ]
+  },
+  {
+    "id": "CQ-002",
+    "pattern_type": "structuring",
+    "why_hard": "The same detector at the $3,000 funds-transfer recordkeeping threshold rather than the $10,000 CTR threshold. The corpus distinguishes them, and the query carries the threshold, so a retriever that treats 'structuring' as one topic returns CQ-001's answer here and gets exactly one of the pair right.",
+    "candidate": {
+      "pattern_type": "structuring",
+      "attributes": {"anchor": "5167947669", "threshold": 3000, "band": [2400.0, 3000.0], "count": 4, "total": 10769.14, "window_days": 14}
+    },
+    "correct_indicator": {"source_id": "ffiec-appendix-f", "section_ref": "Efforts to Avoid Reporting or Recordkeeping Requirement ¶ 6"},
+    "distractors": [
+      {"source_id": "ffiec-appendix-f", "section_ref": "Other Unusual or Suspicious Customer Activity ¶ 9", "why_wrong": "correct for CQ-001's $10,000 band; this candidate's amounts sit under $3,000, which is the recordkeeping threshold"}
+    ]
+  },
+  {
+    "id": "CQ-003",
+    "pattern_type": "fan_in",
+    "why_hard": "Two funnel indicators are near-identical sentences and a third uses 'concentration account' in an entirely different sense -- FFIEC means a bank's internal general-ledger account, not a customer account that money concentrates into. The wrong ones are lexically closer to the candidate's own description than the right one.",
+    "candidate": {
+      "pattern_type": "fan_in",
+      "attributes": {"anchor": "6740948880", "distinct_senders": 12, "count": 12, "total": 175836.54, "window_days": 14}
+    },
+    "correct_indicator": {"source_id": "ffiec-appendix-f", "section_ref": "Other Transactions That Appear Unusual or Suspicious ¶ 2"},
+    "distractors": [
+      {"source_id": "ffiec-appendix-f", "section_ref": "Other Unusual or Suspicious Customer Activity ¶ 18", "why_wrong": "deposits to *various* accounts, plural -- that is dispersal across accounts, not collection into one. This is the near-miss the retriever currently ranks first."},
+      {"source_id": "ffiec-appendix-f", "section_ref": "Changes in Bank-to-Bank Transactions ¶ 2", "why_wrong": "'concentration account' here is the bank's own ledger account, not a customer account receiving from many senders"},
+      {"source_id": "ffiec-appendix-f", "section_ref": "Activity Inconsistent With the Customer’s Business ¶ 9", "why_wrong": "requires the collecting accounts to be personal, business or charity accounts; nothing in the candidate establishes that"}
+    ]
+  },
+  {
+    "id": "CQ-004",
+    "pattern_type": "fan_out",
+    "why_hard": "'Unrelated third parties' and 'large number of transfers with no apparent purpose' both match a dispersal, but in lending, trade-finance and insurance settings. The generic phrase matches; the setting does not.",
+    "candidate": {
+      "pattern_type": "fan_out",
+      "attributes": {"anchor": "5626037357", "distinct_recipients": 14, "count": 14, "total": 27750.34, "window_days": 14}
+    },
+    "correct_indicator": {"source_id": "ffiec-appendix-f", "section_ref": "Shell Company Activity ¶ 5"},
+    "distractors": [
+      {"source_id": "ffiec-appendix-f", "section_ref": "Trade Finance ¶ 8", "why_wrong": "payment of trade proceeds to a third party, not a wire fan-out"},
+      {"source_id": "ffiec-appendix-f", "section_ref": "Lending Activity ¶ 2", "why_wrong": "collateral owned by unrelated parties -- a lending fact"},
+      {"source_id": "ffiec-appendix-f", "section_ref": "Activity Inconsistent With the Customer’s Business ¶ 6", "why_wrong": "a large number of transfers with no apparent purpose: true of this candidate but says nothing about the *variety of beneficiaries*, which is the distinguishing fact"}
+    ]
+  },
+  {
+    "id": "CQ-005",
+    "pattern_type": "scatter_gather",
+    "why_hard": "Dispersal then re-collection. The FINRA 'rapid movement' flag and the ACH 'layers of TPSPs' flag are both lexically close and both describe something else; the right one names the shape itself.",
+    "candidate": {
+      "pattern_type": "scatter_gather",
+      "attributes": {"anchor": "2087192047", "sink": "9982620659", "fan": 5, "intermediaries": ["5068360949", "2661078541", "4374425271", "6016340683", "5897096041"], "total": 88200.0, "window_days": 14}
+    },
+    "correct_indicator": {"source_id": "ffiec-appendix-f", "section_ref": "Efforts to Avoid Reporting or Recordkeeping Requirement ¶ 6"},
+    "distractors": [
+      {"source_id": "finra-rn-19-18", "section_ref": "part 24 of 28", "why_wrong": "small incoming wires almost immediately withdrawn -- speed, not dispersal-then-consolidation. This was this record's labelled answer until Phase 8 measured it: the retriever's first result describes the shape definitionally and the label was wrong."},
+      {"source_id": "ffiec-appendix-f", "section_ref": "Automated Clearing House Transactions ¶ 3", "why_wrong": "'multiple layers of TPSPs' is ACH-specific; these are wires"}
+    ]
+  },
+  {
+    "id": "CQ-006",
+    "pattern_type": "cycle",
+    "why_hard": "**The corpus has no round-trip red flag.** Searching all 479 illustrative chunks for circular / round-trip / returns-to-origin language returns nothing. So the honest expectation is that no indicator is correct and grounding proceeds on the obligations alone (LLD §6 EMPTY_INDICATOR_RETRIEVAL) -- not that the retriever should produce a best-effort match which the report then cites as though a regulator had written it down.",
+    "candidate": {
+      "pattern_type": "cycle",
+      "attributes": {"anchor": "2087192047", "hops": 5, "retained_fraction": 0.71, "route": ["2087192047", "9982620659", "5068360949", "2661078541", "4374425271", "2087192047"], "total": 390343.01, "window_days": 14}
+    },
+    "correct_indicator": null,
+    "expect_no_indicator": true,
+    "excluded_from_precision": "no correct answer exists in the corpus; scoring this would measure the corpus, not the retriever",
+    "distractors": [
+      {"source_id": "ffiec-appendix-f", "section_ref": "Automated Clearing House Transactions ¶ 3", "why_wrong": "layering, but ACH-specific and not circular"},
+      {"source_id": "finra-rn-19-18", "section_ref": "part 20 of 28", "why_wrong": "funds returned to a *different* institution than they came from -- the retriever's current first result, and not a round trip"}
+    ]
+  }
+]

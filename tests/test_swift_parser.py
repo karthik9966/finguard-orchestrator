@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import cached_batch
+
 from src.utils.swift_parser import (
     MalformedMessage,
     existing_log,
@@ -247,7 +249,7 @@ needs_ledger = pytest.mark.skipif(not LABELS.exists(), reason=pytestmark_reason)
 @pytest.mark.parametrize("suffix", [".txt", ".pdf"])
 def test_every_declared_message_is_recovered(suffix):
     for log in sorted(LEDGER.glob(f"*{suffix}")):
-        batch = parse_batch(log, strict=True)
+        batch = cached_batch(str(log), strict=True)
         assert batch.complete, f"{log.name}: {batch.parsed} of {batch.declared_messages}"
         assert not batch.failures
 
@@ -256,8 +258,8 @@ def test_every_declared_message_is_recovered(suffix):
 def test_pdf_and_text_render_of_the_same_batch_parse_identically():
     """The auditor uploads a PDF; the parser must not see a different ledger than the source."""
     for text_log in sorted(LEDGER.glob("*.txt")):
-        from_text = parse_batch(text_log, strict=True)
-        from_pdf = parse_batch(text_log.with_suffix(".pdf"), strict=True)
+        from_text = cached_batch(str(text_log), strict=True)
+        from_pdf = cached_batch(str(text_log.with_suffix('.pdf')), strict=True)
         assert from_text.wires == from_pdf.wires, text_log.name
 
 
@@ -271,7 +273,7 @@ def test_every_field_matches_the_ground_truth_ledger():
     labels = pd.read_csv(LABELS, dtype={"Sender_account": str, "Receiver_account": str})
     checked = 0
     for log, group in labels.groupby("Log_file"):
-        wires = {w.reference: w for w in parse_batch(LEDGER / log, strict=True).wires}
+        wires = {w.reference: w for w in cached_batch(str(LEDGER / log), strict=True).wires}
         assert set(wires) == set(group.Reference), f"{log}: reference set differs"
         for row in group.itertuples():
             wire = wires[row.Reference]

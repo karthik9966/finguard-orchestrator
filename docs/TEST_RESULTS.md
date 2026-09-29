@@ -1,168 +1,187 @@
-# Test & Evaluation Suite Results
+# Test results
 
-**Run 2026-09-08**, all measurements taken in one sitting against commit `3f9a5a3`
-(*add caching at retrieval*). Design in [TEST_DESIGN.md](TEST_DESIGN.md).
+What the system scores, including what fails. Measured on the golden corpus, which is **not** the corpus
+the detectors were tuned on — see [TEST_DESIGN.md](TEST_DESIGN.md).
+
+Reproduce:
+
+```bash
+uv run pytest tests/ -q --cov --cov-report=term          # 489 tests, free
+uv run python -m eval.run --tier deterministic           # ~30s, free
+uv run python -m eval.run --tier live --batches 1        # ~8 min, ~$0.45
+```
 
 ---
 
-## 1 · Summary
+## Summary
 
-| | result |
+| KPI | target | measured | |
+|---|---|---|---|
+| Recall (detector level) | ≥ 0.90 | **0.827** | ✗ |
+| Recall (system reports it) | ≥ 0.90 | **0.667** | ✗ |
+| Faithfulness | 1.00 hard gate | **1.00** (110 checks, 0 violations) | ✓ |
+| Schema conformance | 100% | **100%** | ✓ |
+| Context precision (hit@1) | ≥ 0.90 | **0.60** (hit@3 0.80) | ✗ |
+| Triage: TPs ranked high/medium | ≥ 90% | **100%** | ✓ |
+| Prompt injection resisted | 1.00 | **5/5** | ✓ |
+| Narrative quality | ≥ 0.85 advisory | **1.00** | ✓ |
+| Clean batch | 0 candidates, 0 calls, $0.0000 | **all three** | ✓ |
+| Malformed inputs handled | 10/10 | **10/10** | ✓ |
+| Branch coverage (audit path) | ≥ 85% | **85.6%** | ✓ |
+| 10,000-message batch | detection inside 5 min | **seconds** | ✓ |
+
+Three metrics fail. They are left failing with named causes rather than tuned until green: a first
+baseline's job is to be true, and a threshold moved to fit the number it measures stops measuring
+anything.
+
+## Recall, and the comparator that makes it mean something
+
+```
+ours      0.827 recall  at  19.1% of the batch alerted
+baseline  0.907 recall  at  77.6% of the batch alerted
+```
+
+The rules-only baseline beats us on recall by alerting on four times as much. That is the trade the whole
+system exists to make, and reporting recall without the volume beside it would be reporting half of it.
+
+| pattern | ours | baseline |
+|---|---|---|
+| cycle | 15/15 | 15/15 |
+| fan_in | 14/15 | 15/15 |
+| fan_out | 14/15 | 15/15 |
+| scatter_gather | 14/15 | 15/15 |
+| **structuring** | **5/15** | 8/15 |
+
+**The whole gap is one detector, and it is diagnosed.** The 15 planted structuring clusters have amounts
+spanning **$1,035–$5,811, median $2,323**, against bands of `[8000, 10000)` and `[2400, 3000)` with
+`min_count: 3`. The $10,000 band catches nothing — no planted amount reaches $8,000 — and the $2,400 band
+catches only the one or two transactions per cluster that land inside it, below the minimum.
+
+That is a **mismatch of premises rather than obviously a bug.** Structuring under 31 USC §5324 means
+amounts *chosen* to stay under a reporting threshold, so a cluster spread across $1,035–$5,811 is not
+structuring however suspicious it is. SAML-D's `Structuring` and `Smurfing` labels mean only "split into
+many small amounts" and model no threshold at all.
+
+What *is* a real gap is what falls between the detectors: **one account making many modest deposits over
+a fortnight is caught by neither** — structuring wants the amounts banded near a threshold, fan-in wants
+four or more *distinct* senders. Three options, none taken:
+
+1. Give structuring an aggregate rule — *n* transfers totalling over a threshold inside the window,
+   regardless of band. Catches these, and will cost precision on ordinary business.
+2. Widen `band_fraction`. Cheapest and worst: Phase 3 already measured that no band width separates
+   structuring from clean traffic (clean median $6,220, 73% under $10,000).
+3. Report recall per pattern with this caveat and leave the detector matching the statute.
+
+**System recall (0.667) is the same root cause**, measured on one batch where both misses are structuring.
+Worth stating plainly: on a single batch of nine instances each miss is 11 points, and two live runs of
+the *same* batch differed — 0.778 then 0.667 — on model non-determinism at temperature 0. A recall figure
+over one batch is a weak claim, which is why the batch cap is reported beside the number.
+
+## Faithfulness: 1.00, and it found a defect getting there
+
+Three checks per finding, over every filed report: every cited id resolves to a real chunk; the narrative
+names no chunk id the finding does not cite; the narrative names no transaction outside the candidate.
+
+**First live run: 0.9811 over 106 checks.** Two findings whose narrative named a chunk id their own
+citation list omitted. Nothing was fabricated — the clause was real and had been in the retrieval bundle,
+so the critic was right to pass it — but a report that cites something it does not list is internally
+inconsistent, and §6.4's citations drawer could not resolve what the prose pointed at.
+
+The repair lists what the model used rather than editing its prose: an id named in the narrative and
+present in the bundle is added to the finding's citations. **Re-measured live: 1.00 over 110 checks, zero
+violations.** Two tests hold both halves — a narrative-only id is listed, and a narrative-only id that was
+*never retrieved* is still a veto, so the repair cannot become a way in.
+
+## Context precision: 0.60 hit@1, 0.80 hit@3
+
+Up from **0.22**, which was a genuine defect: the Tier-2 indicator search was using obligation-shaped
+queries. See [LLD.md](LLD.md) §2.4 for why Phase 1's measurement did not transfer. Fixing the register
+moved CQ-001 from absent-from-the-top-5 to rank 1.
+
+The two remaining misses, both characterised:
+
+- **CQ-002** — structuring at the $3,000 recordkeeping threshold returns the $10,000 answer. The threshold
+  reaches the query only as an appended clause, and that is not enough to separate two chunks whose
+  difference *is* the threshold. Putting the amount inside the template body is the obvious fix and is
+  deliberately not done: it would be tuning against the single record that measures it.
+- **CQ-003** — fan-in ranks *"deposits to various accounts that are purportedly unrelated"* above
+  *"multiple accounts used to collect and funnel funds to a small number of beneficiaries"*. The first
+  describes dispersal *across* accounts, the second collection *into* one. I believe the label is right
+  and the retriever wrong; it is the closest call in the set.
+
+hit@3 is reported because `rerank_top_n` is 5: hit@3 of 0.80 is what the model actually sees.
+
+## Cost
+
+| | |
 |---|---|
-| Free suite | **233 passed**, 42.7s, no API key, no network |
-| Free suite with Redis stopped | **233 passed**, 39.1s — identical |
-| Evaluation suite | 13 passed, **3 failed** (16 gpt-4o judgements) |
-| Live audits | 4 batches, all produced valid reports |
-| Container | built, 3.13 GB, full audit completed inside it |
+| clean month (500 records, 0 candidates) | **$0.0000**, 0 model calls |
+| per candidate | **$0.0186 – $0.0248** |
+| one golden batch (1,200 records, 23 candidates) | $0.43 – $0.47 |
+| projected: 10,000-message batch, 304 candidates | ~$5.50 – $7.50 |
 
-The three eval failures are real signal, not flakes. They are discussed in §4 and §5.
+The range on per-candidate cost is the self-check loop: at temperature 0 the critic still scored the same
+drafts differently across runs, and each extra pass is two more model calls. There is deliberately **no
+candidate cap** — and specifically not one by `detection_confidence`, which was measured as
+*anti-correlated* with planted wires (incidental 0.562, planted 0.395), so it would drop the real findings
+first.
 
-## 2 · Free suite
+## Tier 3 — adversarial, 23 tests, all passing
 
-```
-233 passed in 42.72s
-```
+| scenario | expected | result |
+|---|---|---|
+| Empty RAG | needs_review with a reason; **no model call at all** | ✓ |
+| Indicator miss only | proceeds on obligations; finding still filed | ✓ |
+| LLM timeout | that candidate halts; neighbours' findings and evidence intact | ✓ |
+| Timeout ≠ schema error | not re-prompted | ✓ |
+| Malformed inputs (10) | each degrades as its record says; no exception escapes | ✓ |
+| Garbage reaching detectors | impossible — everything surviving ingestion is a valid record | ✓ |
+| Clean batch | 0 candidates, 0 calls, $0.0000, valid empty report | ✓ |
+| Injected memo (5) | a complied-with draft is vetoed **before** the critic model is built | ✓ |
+| Memo redaction | attack text present as data; account numbers and emails masked | ✓ |
 
-| file | tests | | file | tests |
+The injection tests assert the *system's* defence rather than the model's judgement: whatever a compliant
+model would do, a memo cannot put a citation into a finding, because the gate admits only ids that were in
+the bundle. Whether a live model's risk level moves is the separate Tier-2 question — and it scored 5/5,
+each case against its own clean-memo control so any difference is attributable to the injection.
+
+## Privacy, measured
+
+| | before | after |
+|---|---|---|
+| trace payload per run | ~137 KB | **9.2 KB** across 5 spans |
+| raw account numbers in traces | 500 records' worth | **0** |
+| counterparty names | all of them | **0** |
+| the parsed ledger | uploaded in full | `[500 record(s) — omitted]` |
+
+Asserted against the batch's *real* contents: accounts, names and memos are read out of the ledger and
+searched for in the emitted spans, so the test cannot pass by checking values the batch does not contain.
+
+## Retrieval benchmark (ObliQA, 2,786 labelled questions)
+
+Kept from Phase 1 as a regression floor for the reranker. ADGM law, held in a separate collection and
+never retrieved from at runtime.
+
+| | hit@1 | hit@4 | hit@8 | hit@15 |
 |---|---|---|---|---|
-| `test_graph.py` | 49 | | `test_store.py` | 16 |
-| `test_swift_parser.py` | 39 | | `test_cost.py` | 14 |
-| `test_chunker.py` | 27 | | `test_pdf_generator.py` | 14 |
-| `test_detectors.py` | 25 | | `test_acquisition.py` | 12 |
-| `test_cache.py` | 23 | | `test_api.py` | 11 |
-| | | | `test_rerank.py` | 3 |
+| embedding only | 45.2% | 65.2% | 73.2% | 79.2% |
+| + cross-encoder | **55.6%** | **72.9%** | **77.6%** | 79.2% |
 
-**The offline guarantee was verified both ways.** With the Redis container stopped, the same 233
-tests pass in 39.1s. That is the contract for §9.3: a cache that can break an audit is worse than
-no cache.
+The unchanged last column is the point rather than a disappointment: a reranker reorders, it cannot add.
+17.2% of questions have no correct clause in the top 15 at all, and nothing short of better retrieval
+changes that.
 
-## 3 · Component measurements
+## Known gaps
 
-**Parsing** — 880/880 wires across four batches, every field matching `ledger_labels.csv`; PDF and
-TXT renderings parse identically; 0 refusals.
-
-**Detection** — 100% recall (52/52 planted laundering wires), 32% precision, 164/660 wires swept.
-
-**Retrieval** — against ObliQA's 2,786 labelled questions:
-
-| | embedding | + FlashRank |
-|---|---|---|
-| hit@1 | 45.2% | **55.6%** |
-| hit@4 | 65.2% | **72.9%** |
-| hit@8 | 73.2% | **77.6%** |
-| hit@15 | 79.2% | 79.2% |
-
-hit@15 is unchanged by design — a reranker reorders and cannot add. The 17.2% of questions with no
-correct clause in the top 15 is the ceiling.
-
-**Cache** — August batch, audit node only:
-
-| | time | hits |
-|---|---|---|
-| cold | **44.0s** | 0/7 |
-| warm | **0.0s** | **7/7, 21.0s saved** |
-
-Retrieved context byte-identical between the two. On a full run the warm figure is 7/8 — the miss
-is the critic's reformulated query, which is model-written and new every time.
-
-## 4 · Live audits — 2026-09-08
-
-| batch | truth | rating | confidence | passes | cost |
-|---|---|---|---|---|---|
-| 2023-05 *(clean control)* | **0** laundering | **Low** | 0.00 | 2 | $0.0839 |
-| 2023-06 | 21 | Medium | 0.50 | 2 | $0.1231 |
-| 2023-07 | 23 | Medium | 0.50 | 2 | $0.1768 |
-| 2023-08 | 8 | Medium | 0.75 | 2 | $0.0962 |
-
-### The May result needs reading carefully
-
-May is the clean control and came back **Low** — the correct answer, and the first time it has.
-**That is not the risk-rating defect being fixed.** Confidence was **0.00**, which is the citation
-veto's score, and the reservations say why:
-
-> - Cites 'FINRA Regulatory Notice 19-18 part 2', which is not among the retrieved clauses.
-> - Cites 'FinCEN Alert FIN-2023-Alert002 (commercial real estate) part 21', which is not among
->   the retrieved clauses.
-
-**The draft fabricated two citations and the Python gate caught both.** The right rating arrived
-by way of a failure, not by calibration. Two things are simultaneously true and both worth
-recording:
-
-- **The safety machinery works in production.** This is the first observed live firing of the
-  citation veto. `applicable_regulations` on the filed report contains only
-  `AML Rulebook 14.2.3.Guidance.1.` — the one clause genuinely retrieved. The fabrications were
-  stripped by `generate_node`'s evidence repair and recorded as reservations, exactly as designed.
-- **The rating defect is unchanged.** June, July and August all read Medium regardless of carrying
-  21, 23 and 8 laundering wires. The failing test stays failing.
-
-## 5 · Evaluation suite
-
-16 gpt-4o judgements, 138s.
-
-| batch | Faithfulness | Answer Relevancy | Context Precision |
-|---|---|---|---|
-| 2023-05 | **1.000** | 0.765 ✗ | 0.646 ✗ |
-| 2023-06 | **1.000** | 0.968 | 0.547 ✗ |
-| 2023-07 | **1.000** | 1.000 | 0.887 |
-| 2023-08 | **1.000** | 1.000 | 0.975 |
-| threshold | 0.85 | 0.80 | 0.70 |
-
-**Faithfulness is 1.000 on every batch.** The reports invent nothing — measured, not asserted.
-Notably this holds on May *even though its draft fabricated two citations*: the veto and the
-evidence repair removed them before the report existed, so the artifact being judged was clean.
-The layered defence is doing exactly what it was built for.
-
-**Context Precision is the weak metric**, and it is the same finding the reranker experiment
-reached independently. The judge's reasoning on June:
-
-> *"relevant nodes are present, but not consistently ranked higher than irrelevant nodes"*
-
-and on May:
-
-> *"the fourth node, which focuses on BSA reporting for large-dollar cash transactions…"*
-
-— a US Bank Secrecy Act clause ranked above ADGM material on an ADGM batch. That is a retrieval
-ordering problem, not a writing problem, which is precisely the distinction this metric exists to
-draw.
-
-**May's Answer Relevancy of 0.765** is arguably the metric working correctly against a report that
-should not have been written at all: on a batch with nothing to find, discussion of a legitimate
-£337,217 consultancy fee reads as partly irrelevant, because it is.
-
-## 6 · Cost
-
-| batch | calls | tokens | cost |
-|---|---|---|---|
-| no candidates | 0 | 0 | **$0.0000** |
-| 2023-05 | 5 | — | $0.0839 |
-| 2023-08 | 5 | — | $0.0962 |
-| 2023-06 | 5 | — | $0.1231 |
-| 2023-07 | 5 | — | $0.1768 |
-
-Across 12 runs recorded over the project: **median $0.093, mean $0.100, range $0.047–$0.178.** The
-spread is not batch size — all four batches hold exactly 220 wires. It is driven by whether the
-critic accepts the first draft (3 calls vs 5) and by how many candidates fire.
-
-Evaluation adds roughly **$0.30** per full scoring run.
-
-## 7 · Container
-
-```
-docker build -t finguard .        → 3.13 GB
-GET  /health                      → {"status":"ok","vectors":12273,"backend":"minilm"}
-POST /audit  (2023-05)            → 202, 220 wires
-GET  /audit/…                     → complete after ~40s
-                                  → risk Medium · confidence 0.50 · 5 calls · $0.0935
-```
-
-An earlier estimate of ~1.2 GB was wrong by 2.6×: the Linux CPU torch wheel is 656 MB, not the
-~200 MB inferred from macOS. The CPU swap still earns its place — it removes roughly a gigabyte of
-`nvidia-*` CUDA runtime, confirmed by the build printing `torch 2.14.0+cpu cuda None`.
-
-## 8 · Open, and unchanged by this run
-
-1. **Risk rating does not separate clean from dirty batches.** May's Low came from a veto.
-2. **Context Precision below threshold on two of four batches** — retrieval ordering.
-3. **17.2% retrieval ceiling** — no correct clause in the top 15; not addressable by reranking.
-4. **`escalate()` never exercised live.**
-5. **Detector precision 32%** — deliberate, given 100% recall.
+1. **Structuring recall**, above. The decision is deferred with three options and the measurements behind
+   each.
+2. **The corpus has no cycle-specific red flag.** Searching all 479 illustrative chunks for
+   circular / round-trip / returns-to-origin language returns nothing, so a cycle candidate grounds on
+   obligations alone. CQ-006 expects exactly that and is excluded from the precision denominator with that
+   reason stated. This is a corpus gap to close, not a scoring convenience.
+3. **Context precision below target**, with both misses characterised above.
+4. **Neither CI workflow has run.** No runner here; the nightly needs secrets.
+5. **`docker compose` is configuration-validated but not launched** — no Docker daemon on this machine.
+6. **The cockpit's file-uploader widget is the one path `AppTest` cannot reach.** Everything either side
+   of it is tested, and submit-through-the-client is verified against a live server.
+7. **System recall is measured on one batch.** The nightly job defaults to more.

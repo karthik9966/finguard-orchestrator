@@ -1,152 +1,160 @@
-# Test & Evaluation Suite Design
+# Test design as built
 
-**As-built**, 2026-09-08. Results in [TEST_RESULTS.md](TEST_RESULTS.md).
+Companion to `FinGuard_Eval_Design.docx`. The three tiers, the six golden corpora, and the two CI
+gates. What it scores is in [TEST_RESULTS.md](TEST_RESULTS.md).
 
 ---
 
-## 1 · Two suites, because there are two kinds of question
+## The two departures that shape everything else
 
-**Assertable questions have right answers.** Does `5669,49` parse to 5669.49? Does a fabricated
-citation get vetoed? Does the merge keep the best distance? These are ordinary tests — 233 of
-them, ~40 seconds, **no API key and no network**.
+Eval Design names them and they held:
 
-**Judgement questions have no right answer.** Is this finding well reasoned? Does the report
-address the audit that was requested? These need an LLM judge, cost money per case, and live in a
-separate marker-gated suite.
+**Faithfulness is deterministic, not judged.** The critic rejects any finding whose citations are not a
+subset of what was retrieved, so the target is 100% *enforced by code* — a proof rather than an
+estimate, and cheaper because it needs no extra model call. An LLM judge survives only for narrative
+readability, and it is advisory.
+
+**The attack surface is data, not chat.** The model never sees free-form user input, only structured
+records plus retrieved rule text. The one realistic injection vector is a transaction's memo field,
+which is exactly why the memo reaches the prompt rather than being stripped — a fixture whose memo is
+withheld tests nothing.
+
+## The three tiers, and where each lives
+
+| tier | asks | where | cost |
+|---|---|---|---|
+| 1 · deterministic integration | do the nodes, detectors, retrieval-by-id and the SQLite write behave? does every inter-node object satisfy its model? | `tests/` (489 tests) + `eval.run --tier deterministic` | free |
+| 2 · probabilistic ML quality | does the system *report* the finding, cite only retrieved rules, rank launderers above lookalikes, read clearly? | `eval.run --tier live` | ~$0.45 per golden batch |
+| 3 · adversarial robustness | malformed input, LLM timeout, clean batch, injected memo, empty RAG | `tests/test_failure_injection.py` (23 tests) | free |
+
+Tier 3 is free and in the unit suite by design. Every row of Eval Design §5 is reachable with a stubbed
+model — an empty bundle, a timeout, a malformed file, a clean batch, a complied-with injection — so they
+run on every push rather than nightly. The one thing a live model adds is whether the *model* resists an
+injection, and that is measured in Tier 2; what Tier 3 asserts is that the system's own defences hold
+regardless of what the model does.
+
+## The six golden corpora
+
+Full provenance in [`eval/datasets/README.md`](../eval/datasets/README.md).
+
+| dataset | records | origin | measures |
+|---|---|---|---|
+| `labeled_patterns` | 75 (15 × 5) | **derived** | recall, triage, narrative quality |
+| `clean_batch` | 1 batch, 500 txns | **derived** | zero candidates, zero calls, $0.0000 |
+| `benign_lookalikes` | 20 | **authored** | triage: must rank below real launderers |
+| `complex_queries` | 6 | **authored** | context precision |
+| `malformed_inputs` | 10 + files | **authored** | ingestion degrades, never fabricates |
+| `injected_memos` | 5 | **authored** | memo text is inert data |
+
+**Derived** means nobody's judgement is in the label — SAML-D ships its suspicious rows already
+labelled, so these are a *selection* and `build_datasets --check` reproduces them exactly. **Authored**
+means somebody decided, so every authored record carries its own reasoning field: the reasoning *is* the
+label, and a reviewer who disagrees with it is disagreeing with the label.
+
+### The corpus these point at is not the one the detectors were tuned on
+
+`labeled_patterns` names transactions in `data/processed/eval_ledger/` — eleven months, 1,200 messages
+each, three clusters of every in-scope typology per month:
 
 ```bash
-uv run pytest tests/                    # 233 tests, free, no key
-uv run pytest tests/eval_suite.py -m eval   # ~16 gpt-4o judgements, ~$0.30
+uv run finguard-ledger --profile eval
 ```
 
-`addopts = "-m 'not eval'"` in `pyproject.toml` keeps the paid suite out of the default run. That
-separation is load-bearing: the free suite is the one that runs on every change, so anything that
-makes it need a key or a network has broken its purpose, not just a test.
+That is deliberately **not** `data/processed/ledger/`. Every number in [CONSTANTS.md](CONSTANTS.md)
+cites "measured across the four dev batches" as its evidence; evaluating on that same data would be
+marking my own homework. The gap between the two is visible in the results and is the point of having
+both.
 
-## 2 · The offline guarantee, and how it has been broken
+I got this wrong once and caught it: the first eval build ran with `--append` into the dev corpus, which
+put six extra months into `ledger_labels.csv` — and the recall harness groups by log file and iterates
+all of them, so the recorded 99% would silently have become a number measured on different data.
 
-Three times, a change quietly made the free suite depend on something external. Each is now
-prevented by a fixture rather than by discipline:
+### Three changes the golden set required of the generator
 
-| what happened | how it hid | the guard |
-|---|---|---|
-| FlashRank downloads a 3 MB model on first use | it caches to `/tmp`, so a machine that had run the pipeline once passed | autouse `reranker_off` in `test_graph.py` |
-| the retrieval cache intercepts *before* `nodes.retrieve` | seven tests got real cached clauses where they had stubbed a retrieval — only on a machine with Redis running | autouse `cache_off` |
-| `flashrank` was declared a **dev** dependency but imported at module scope | every local run has dev deps; only `--no-dev` (i.e. the container) failed | moved to runtime deps; caught by the first real Docker build |
+- **`clusters_per_typology`** — `select_cases` planted one cluster per typology per month, which caps at
+  36 instances across every month SAML-D has. Seventy-five needs three per typology per month. The
+  default stays 1, so the dev and large corpora regenerate identically.
+- **The answer key names its own instances.** A `Cluster` column, written by the planter. Recall at the
+  PRD's level is "did the system report this fan-in", which needs to know which transactions form one
+  instance — and a cycle is a walked chain with no anchor account, so reconstructing its membership from
+  the labels afterwards is not reliably possible.
+- **Disjoint rings.** Cycles were capped at one per month on the theory that a second ring drawn from the
+  leftovers is a fragment of the first. Measured, that was wrong: walking the remaining edges gives
+  genuine disjoint rings of median 9 transactions, and available cycle instances went 11 → 29.
 
-The lesson each time was the same: **a dependency that is present locally is invisible until
-something installs less than you do.**
+Sizing is a consequence of `MAX_FLAGGED_SHARE = 0.15` rather than a preference: a cluster averages ~20
+transactions, so a 500-message batch holds three before the flagged share stops being credible.
 
-## 3 · What the free suite covers
+## The rules-only baseline
 
-| file | tests | what it pins |
-|---|---|---|
-| `test_swift_parser.py` | 39 | comma-decimal, continuation lines, refusal, 880/880 against the answer key |
-| `test_graph.py` | 49 | node contracts, the citation veto, routing, the cycle, RRF, evidence repair |
-| `test_chunker.py` | 27 | semantic boundaries |
-| `test_detectors.py` | 25 | recall against `ledger_labels.csv`; each primitive |
-| `test_cache.py` | 23 | exact/semantic matching, TTL, degradation |
-| `test_store.py` | 16 | build, tiering, `by_id`, backend mismatch |
-| `test_cost.py` | 14 | price matching, per-node attribution, unpriced models |
-| `test_pdf_generator.py` | 14 | MT103 rendering, label integrity |
-| `test_acquisition.py` | 12 | manifest, checksums |
-| `test_api.py` | 11 | 202/400/415/404/503, background execution, temp-file cleanup |
-| `test_rerank.py` | 3 | promotion, nothing added or lost — skipped if the model is absent |
+`eval/baseline.py`, HLD §1.1's comparator, offline and explicitly not a runtime component.
 
-### Three testing patterns worth copying
+It exists because **recall alone is unfalsifiable** — a detector that flags every transaction scores
+1.00 — so the interesting claim is never recall but *recall at a given alert volume*. The baseline is
+what a legacy transaction-monitoring engine does: five flat threshold rules, no graph, no window, drawn
+from the same statutes the real detectors cite so it is not a strawman.
 
-**Ground truth, not self-consistency.** `ledger_labels.csv` names every planted laundering wire, so
-detector recall is measured against what was actually planted rather than against the detector's
-own output.
+| rule | |
+|---|---|
+| R1 | any transfer ≥ $10,000 (CTR filing trigger) |
+| R2 | any transfer in [$8,000, $10,000) |
+| R3 | any account whose same-day total reaches $10,000 across more than one transfer |
+| R4 | any account with ≥ 8 distinct counterparties in the batch — **no window** |
+| R5 | any transfer ≥ $3,000 (recordkeeping threshold) |
 
-**Guard the specific bug, not the happy path.**
+R5 is included precisely because it is genuinely in the regulations and genuinely useless as an alert: it
+fires on most of the batch, which is the thing being demonstrated.
 
-```python
-def test_the_naive_reading_would_be_a_hundredfold_error():
-    assert parse_amount("5810,46") == Decimal("5810.46")
-    assert float("5810,46".replace(",", "")) == 581046.0, "the trap is still a trap"
-```
+## The two CI gates
 
-The second assertion fails if the trap ever stops being a trap — at which point the test is
-obsolete and should say so.
+**`pr.yml` — every push, free, fast.** The offline guarantee is asserted through the environment
+(`HF_HUB_OFFLINE`, `TRANSFORMERS_OFFLINE`) rather than through discipline, after three pre-migration
+regressions in which a change quietly made the free suite depend on something external — each invisible
+locally because the developer's machine already had the thing. A step **fails the run** if
+`LLM_API_KEY`, `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is present: every test that would reach a model
+injects a stub, so a run that somehow made a real call should fail rather than quietly bill, and that is
+a stronger guarantee than trusting the stubs. Config and contract validation run first so a broken
+`config.yaml` does not bury the run in downstream noise, and a final step reports what skipped — a gate
+that silently covers less than it appears to is worse than a smaller gate.
 
-**Every stub is a real object.** `StubModel` records prompts *and* configs, so a test can assert
-that the two drafts of a looping run carry different `loop:` tags. Stubs that only return values
-cannot verify observability.
+It does **not** build the corpus. The knowledge base needs two third-party downloads (eCFR/FFIEC over
+the network, SAML-D from Kaggle), and a gate depending on those fails for reasons unrelated to the change
+under review. The suite is built for it: tests needing generated data skip themselves with the command
+that would produce it.
 
-## 4 · The evaluation suite
+**`nightly.yml` — scheduled, paid.** Runs the full suite with the data in place, then both eval tiers,
+recording to Langfuse so scores are trended rather than merely pass/fail. Results are uploaded with
+`if: always()`, because a failing run's numbers are the ones worth reading.
 
-Four cases, one per batch, each a real captured run scored on three metrics (§8.1):
+**How CI gets a built `rule_chunks`: it rebuilds, and caches on the manifest hash plus the embedding
+model.** The alternatives and why not — committing the collection puts 74 MB of Chroma SQLite in every
+clone for ever, and it is a build artefact of `finguard-store`; caching alone makes a cache miss a
+*failure* rather than a slower run, so the first run after any corpus change fails in a way that looks
+like a regression; rebuilding unconditionally spends ten minutes of embedding every night on a corpus
+that changes when a regulator publishes. The embedding model is part of the cache key because a
+collection built at one dimension cannot answer a query embedded at another, and that failure is silent.
 
-| metric | question | catches |
-|---|---|---|
-| **Faithfulness** | does every claim rest on the retrieved clauses? | hallucination |
-| **Answer Relevancy** | does the report address the audit requested? | drift |
-| **Contextual Precision** | did retrieval rank the useful clauses above the noise? | a *retrieval* failure disguised as a writing failure |
+Neither workflow has been executed: there is no runner in this environment, and the nightly needs
+secrets.
 
-The third is the valuable one: a thin report has two possible causes needing opposite fixes — the
-model wrote badly, or the model never received the right law — and they are indistinguishable from
-the output alone.
+## Coverage
 
-Thresholds: 0.85 / 0.80 / 0.70. The first two are the blueprint's; **0.70 is a starting line, not a
-measured one**, and the honest run is what should eventually set it.
+85.6% branch, gated at 85, scoped in `pyproject.toml` to the modules that run **during an audit**. The
+omitted files are one-off build and acquisition CLIs — fetch the corpus, chunk it, render the ledgers,
+run the retrieval benchmark — each exercised by being run rather than imported, and each of which would
+drag the number down while saying nothing about whether an audit is correct. A repository-wide figure
+reads 59% and is unactionable. The floor sits just under the measured value on purpose: a gate above
+what the suite achieves is turned off within a week.
 
-### Two deliberate departures from the blueprint
+## The dataset is tested like an instrument
 
-**The gold set is real.** §8.2 proposes hand-written scenarios; its example cites `FINRA Rule
-3310(a)`, which cannot be grounded here at all, because FINRA publishes no rule PDFs and the ADGM
-AML Rulebook is what was indexed. Instead each reference answer is generated from
-`ledger_labels.csv`:
+18 tests in `tests/test_golden_datasets.py`, because the failures they catch are all quiet: a curated
+indicator pair that stops resolving makes context precision unmeasurable *while still producing a
+number*; a labelled reference absent from the batch it names makes recall look worse than it is and looks
+exactly like a detector fault; a lookalike expecting `high` makes triage precision meaningless.
 
-> *"This batch contains 21 laundering wires out of 220: 10 exhibiting structuring, 8 smurfing,
-> 3 deposit-send."*
-
-**Capture is separate from scoring.** `src/graph/evalset.py` runs the pipeline and freezes input,
-output, retrieval context and reference answer to `eval_cases.json`; the suite scores that file.
-Re-running the pipeline to test a prompt change would vary *two* things — the report and the
-clauses it saw. Freezing the evidence isolates the variable.
-
-### The assertion no judge can make
-
-```python
-def test_a_clean_batch_is_not_reported_as_a_finding(case):
-    if case["ground_truth"]["laundering_wires"] == 0:
-        assert case["run"]["risk_rating"] == "Low"
-```
-
-No LLM judge catches a wrongly-rated clean batch: each report is individually plausible,
-internally consistent, and scores 1.000 on Faithfulness. Only the answer key knows better. It is
-written as a **failing test rather than a paragraph** because a known defect described in prose
-gets forgotten, and one that turns the run red does not.
-
-## 5 · Retrieval benchmarking
-
-Separate from both suites, because it measures the corpus rather than the code:
-`src/ingestion/benchmark.py` scores hit@k / recall@k / MRR against ObliQA's **2,786 labelled
-questions**. This is where the reranker was decided — and where the ceiling was established:
-17.2% of questions have no correct clause in the top 15, which no reranker can lift.
-
-## 6 · Live verification
-
-Some properties only appear against a real model, and each of these was a defect found that way,
-not in a test:
-
-- gpt-4o running to its 16,384-token output ceiling and killing a run after four paid calls
-- the risk rating being anti-correlated with ground truth
-- the citation veto firing on genuinely fabricated citations
-- an unhashable callback crashing mid-run
-- a container failing on a dev-only dependency, a re-installed CUDA torch, and a read-only mount
-
-The protocol is one run per batch after any change to prompts, retrieval or the graph, recording
-candidates, queries, clauses, critic passes, confidence, rating, citations and cost.
-
-## 7 · What is not tested
-
-Stated so the gaps are choices rather than oversights:
-
-- **`escalate()` against a live model** — no generated batch contains a malformed message
-- **Concurrency** — the API registry is a single-process dict; no test covers two workers
-- **The Streamlit UI itself** — its data paths are exercised, its rendering is not
-- **Load** — no throughput or sustained-run testing
-- **Adversarial input** — a deliberately hostile PDF is refused by `parse_batch`, but prompt
-  injection through wire memo fields is unexplored
+One of them exists because of a defect it found: **four of the original ten query records specified
+candidate attributes no detector emits** (`distinct_senders` on a structuring candidate,
+`outflow_within_days` on a fan-in). They were measuring candidate shapes that never occur.
+`test_every_query_candidate_uses_attributes_a_detector_really_emits` now checks every record against a
+map of what the detectors actually produce, and a second test holds that map to the detectors.

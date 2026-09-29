@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from src.graph import rerank as rerank_module
+from src.retrieval import rerank as rerank_module
 
 MODEL_CACHE = Path("/tmp") / rerank_module.RERANK_MODEL
 

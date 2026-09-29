@@ -11,7 +11,10 @@ dependencies = [
     "chromadb",
     "pypdf",
     "pydantic",
-    "redis",
+    # Phase 0 of the design migration -- LLD §8's config split. pydantic-settings owns the
+    # environment half (secrets, endpoints), PyYAML the config.yaml half (every tunable number).
+    "pydantic-settings",
+    "pyyaml",
     "sentence-transformers",
     "fastapi",
     "uvicorn",
@@ -28,6 +31,11 @@ dependencies = [
     # imports it at module scope and USE_RERANKER defaults on, so a `--no-dev` install without
     # it dies at import. Caught by the first real Docker build, which is what --no-dev does.
     "flashrank>=0.2.10",
+    # Phase 6a §3.2 — the results store. Already present transitively via langchain-community, but
+    # `src/store/results.py` imports it directly and the LLD's RESULTS_DB_URL is the whole reason
+    # it is here: SQLite in v1 and Postgres in production is a URL change and nothing else.
+    "sqlalchemy",
+    "langfuse>=4.15.6",
 ]
 
 [dependency-groups]
@@ -39,15 +47,14 @@ dev = [
     # langchain_community.chat_models.vertexai, removed in
     # langchain-community 0.4.x. deepeval covers the three
     # blueprint metrics. Revisit when upstream fixes it.
-    "fakeredis>=2.38.0",
+    "pytest-cov>=7.1.0",
 ]
 
 # `uv sync` puts each on PATH. Every target is a
 # no-argument `main() -> int`; the generated wrapper passes that to sys.exit.
 [project.scripts]
-finguard-audit     = "src.graph.graph:main"          # batch PDF -> ComplianceReport
+finguard-audit     = "src.graph.run:main"            # batch PDF -> ComplianceReport
 finguard-parse     = "src.utils.swift_parser:main"   # MT103 batch -> wires, with stats
-finguard-detect    = "src.utils.detectors:main"      # wires -> candidate patterns
 finguard-ledger    = "src.utils.pdf_generator:main"  # render SWIFT MT103 monthly logs
 finguard-download  = "src.ingestion.download:main"   # fetch both corpora, write the manifest
 finguard-map       = "src.ingestion.obliqa_map:main" # ObliQA DocumentIDs -> document titles
@@ -69,3 +76,32 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+# --- coverage (LLD §7) ---------------------------------------------------------------------
+# The gate is scoped to the modules that run *during an audit*, not to the repository. The omitted
+# files are one-off build and acquisition tools -- fetch the corpus, chunk it, render the ledgers,
+# run the retrieval benchmark -- each a CLI that is exercised by being run rather than by unit tests,
+# and each of which would drag the number down while saying nothing about whether an audit is
+# correct. Scoping it explicitly is the honest alternative to reporting a repository-wide figure
+# that nobody can act on.
+[tool.coverage.run]
+branch = true
+source = ["src"]
+omit = [
+    "src/ingestion/download.py",      # network acquisition, run once per corpus refresh
+    "src/ingestion/loader.py",        # the corpus build CLI
+    "src/ingestion/obliqa_map.py",    # a one-off DocumentID mapping
+    "src/ingestion/benchmark.py",     # the retrieval benchmark harness
+    "src/utils/pdf_generator.py",     # the synthetic ledger generator
+    "src/graph/evalset.py",           # Phase 8's capture harness, superseded by eval/
+    "src/ui/cockpit.py",              # a Streamlit script; covered by AppTest, not by import
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# Measured at 85.53% on this scope. The floor is 85: a gate above what the suite actually achieves is
+# a gate that gets turned off within a week, and one far below it stops catching anything. The two
+# files holding it down are `graph/run.py`'s argparse CLI and `ingestion/store.py`'s, both of which
+# are exercised by being run rather than imported.
+fail_under = 85

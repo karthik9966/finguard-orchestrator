@@ -21,6 +21,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from collections import Counter
@@ -29,12 +30,13 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
+from src.config import get_config
 from src.ingestion.chunker import (
-    DEFAULT_PERCENTILE,
-    MAX_CHARS,
-    MIN_CHARS,
     chunk_semantic,
     normalize,
+    split_by_section,
+    split_cfr_xml,
+    partition_guidance,
     strip_invisibles,
     strip_provenance_header,
 )
@@ -47,11 +49,10 @@ REGULATIONS = DATA_DIR / "raw" / "regulations"
 OBLIQA_DOCS = REGULATIONS / "obliqa" / "StructuredRegulatoryDocuments"
 CHUNK_DIR = DATA_DIR / "processed" / "chunks"
 
-# Passages this short are headings or numbering artefacts, not retrievable content.
-MIN_PASSAGE_CHARS = 40
-# Below this a chunk is a fragment like "(c) enquire into the background..."; prefixing the
-# document and clause makes it self-describing without changing its citation.
-CONTEXT_PREFIX_BELOW = 200
+# Both chunking floors are read from config.yaml at call time (LLD §8): a passage shorter than
+# `min_passage_chars` is a heading or a numbering artefact rather than retrievable content, and one
+# shorter than `context_prefix_below` is a fragment like "(c) enquire into the background..." that
+# gets the document and clause prefixed so it is self-describing without changing its citation.
 
 # Tiers from the §3.2 corpus analysis: only 2.9% of ObliQA passages are AML-bearing and 62% of
 # those sit in Document 1. Tier 3 is kept indexed as the distractor set that makes §8.1 Context
@@ -156,7 +157,7 @@ def tier_for(document_id: int) -> int:
 def is_bare_heading(text: str) -> bool:
     """True for numbering stubs and all-caps section titles carrying no obligation."""
     stripped = text.strip()
-    return len(stripped) < MIN_PASSAGE_CHARS
+    return len(stripped) < get_config().chunking.min_passage_chars
 
 
 def context_prefix(document_title: str, section_clause: str) -> str:
@@ -180,13 +181,13 @@ def obliqa_chunks(encode, *, percentile: float) -> Iterator[dict]:
             clause = strip_invisibles(passage["PassageID"]).strip()
 
             pieces = chunk_semantic(
-                raw, encode, percentile=percentile, min_chars=MIN_CHARS, max_chars=MAX_CHARS
+                raw, encode, percentile=percentile
             )
             multi = len(pieces) > 1
             for index, text in enumerate(pieces, start=1):
                 if not text.strip():
                     continue
-                if len(text) < CONTEXT_PREFIX_BELOW:
+                if len(text) < get_config().chunking.context_prefix_below:
                     text = context_prefix(title, clause) + text
                 suffix = f"#{index}" if multi else ""
                 # (DocumentID, PassageID) is NOT unique: 17 keys collide across 44 passages
@@ -242,7 +243,7 @@ def pdf_chunks(encode, *, percentile: float) -> Iterator[dict]:
         pages = [page.extract_text() or "" for page in PdfReader(path).pages]
         text = normalize(_BULLET_ARTEFACT.sub("", strip_page_furniture(pages)))
         pieces = chunk_semantic(
-            text, encode, percentile=percentile, min_chars=MIN_CHARS, max_chars=MAX_CHARS
+            text, encode, percentile=percentile
         )
         for index, piece in enumerate(pieces, start=1):
             yield {
@@ -273,7 +274,7 @@ def finra_rule_chunks(encode, *, percentile: float) -> Iterator[dict]:
         )
         text = normalize(strip_provenance_header(path.read_text()))
         pieces = chunk_semantic(
-            text, encode, percentile=percentile, min_chars=MIN_CHARS, max_chars=MAX_CHARS
+            text, encode, percentile=percentile
         )
         for index, piece in enumerate(pieces, start=1):
             yield {
@@ -291,10 +292,153 @@ def finra_rule_chunks(encode, *, percentile: float) -> Iterator[dict]:
             }
 
 
+# --- Path C: the citable US corpus (LLD §3.2) -----------------------------------------
+#
+# Driven by MANIFEST.json rather than by a registry declared here. The manifest already carries
+# tier, authority, source_id, effective_date and version -- most of the target schema -- and it
+# is what `finguard-download --check` verifies. A second list in this file would be a second
+# thing to keep in step, and the first divergence would be silent.
+
+MANIFEST_PATH = DATA_DIR / "MANIFEST.json"
+
+
+def us_artifacts() -> list[tuple[Path, dict]]:
+    """Every acquired artifact that belongs in `rule_chunks`, newest metadata first.
+
+    Excludes the benchmark corpora: ObliQA is ADGM and moves to its own collection in Phase 1c,
+    and SAML-D is transactions, not law.
+    """
+    manifest = json.loads(MANIFEST_PATH.read_text())["artifacts"]
+    found = []
+    for relative, meta in sorted(manifest.items()):
+        if meta.get("role") == "benchmark" or not meta.get("tier"):
+            continue
+        found.append((DATA_DIR / relative, meta))
+    return found
+
+
+def section_stem(source_id: str) -> str:
+    """The citation stem a paragraph path hangs off: `§ 5324`, `Rule 3310`."""
+    if source_id.startswith("31usc"):
+        return f"§ {source_id.removeprefix('31usc')}"
+    if source_id.startswith("finra-"):
+        return f"Rule {source_id.removeprefix('finra-')}"
+    return source_id
+
+
+def statute_body(raw: str, source_id: str) -> str:
+    """The operative text, without the provenance header, the front matter or the notes.
+
+    govinfo wraps a statute in publication furniture -- title, chapter and subchapter headings
+    before it, editorial and amendment notes after. Chunked in, the notes retrieve as though they
+    were the law.
+    """
+    body = strip_provenance_header(raw)
+    opening = re.search(r"(?m)^§\s*\d", body) or re.search(r"(?m)^\(a\)", body)
+    if opening:
+        body = body[opening.start():]
+    return re.split(r"\n\(Added Pub|\nEditorial Notes|\nStatutory Notes", body)[0]
+
+
+def us_corpus_chunks(encode, *, percentile: float) -> Iterator[dict]:
+    """Split each US artifact by its tier and emit LLD §3.2 metadata."""
+    topics = get_config().source_topics
+
+    for path, meta in us_artifacts():
+        source_id = meta["source_id"]
+        tier = meta["tier"]
+        pieces: list[tuple[str, str]]
+
+        if path.suffix == ".xml":
+            pieces = split_cfr_xml(path.read_text())
+        elif path.suffix == ".txt":
+            pieces = split_by_section(
+                statute_body(path.read_text(), source_id), section=section_stem(source_id)
+            )
+        else:
+            pages = [page.extract_text() or "" for page in PdfReader(path).pages]
+            text = normalize(_BULLET_ARTEFACT.sub("", strip_page_furniture(pages)))
+            # Guidance is narrative *with* red-flag lists inside it, so both halves are indexed:
+            # the indicators individually, because "which indicator matched" has to be
+            # answerable, and the prose semantically, because the SAR filing requirements are in
+            # it. Taking one and discarding the other loses something either way.
+            pieces, prose = partition_guidance(
+                text, fallback_heading=meta.get("note", source_id)[:60]
+            )
+            parts = chunk_semantic(
+                prose, encode, percentile=percentile,
+            )
+            pieces += [
+                (f"part {index} of {len(parts)}", piece)
+                for index, piece in enumerate(parts, start=1)
+            ]
+
+        for section_ref, body in pieces:
+            yield {
+                "chunk_id": chunk_identity(source_id, section_ref, meta.get("version", "")),
+                "text": body,
+                "tier": tier,
+                "authority": meta["authority"],
+                "source_id": source_id,
+                "section_ref": section_ref,
+                "jurisdiction": "US",
+                "topic_tags": topics.get(source_id, []),
+                "effective_date": meta.get("effective_date"),
+                "version": meta.get("version", ""),
+                "source_file": path.name,
+            }
+
+
+def chunk_identity(source_id: str, section_ref: str, version: str) -> str:
+    """`hash(source_id, section_ref, version)` per LLD §3.2.
+
+    Version is in the hash so a re-acquired eCFR edition produces different ids rather than
+    overwriting the old ones in place -- a citation in a filed report must keep resolving to the
+    text it was drafted against, not to whatever that section says today.
+    """
+    digest = hashlib.sha256(f"{source_id}|{section_ref}|{version}".encode()).hexdigest()
+    return f"{source_id}:{digest[:16]}"
+
+
 # --- entry point ---------------------------------------------------------------------
 
 
-def build(backend_name: str, *, percentile: float = DEFAULT_PERCENTILE) -> Path:
+def rules_path(backend_name: str) -> Path:
+    return CHUNK_DIR / f"rules-{backend_name}.jsonl"
+
+
+def build_rules(backend_name: str, *, percentile: float | None = None) -> Path:
+    """Chunk the citable US corpus into its own file.
+
+    Separate from :func:`build` rather than folded into it: that one feeds the `regulations`
+    collection, which still holds ADGM until Phase 1c moves it, and mixing jurisdictions in one
+    file would make the US-only assertion a query-time hope instead of a build-time fact.
+    """
+    CHUNK_DIR.mkdir(parents=True, exist_ok=True)
+    dest = rules_path(backend_name)
+
+    with get_backend(backend_name) as backend:
+        records = list(us_corpus_chunks(backend.encode, percentile=percentile))
+
+    seen = Counter(record["chunk_id"] for record in records)
+    if duplicates := [cid for cid, count in seen.items() if count > 1]:
+        raise RuntimeError(f"duplicate chunk_ids: {duplicates[:5]}")
+
+    with dest.open("w") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    tiers = Counter(record["tier"] for record in records)
+    authorities = Counter(record["authority"] for record in records)
+    indicators = sum(1 for record in records if " ¶ " in record["section_ref"])
+    print(f"  {backend_name}: {len(records):,} rule chunks -> {dest.relative_to(PROJECT_ROOT)}")
+    print(f"    by tier      {dict(tiers)}")
+    print(f"    by authority {dict(authorities)}")
+    print(f"    indicators   {indicators} (one red flag each), {len(records) - indicators} law/prose")
+    return dest
+
+
+def build(backend_name: str, *, percentile: float | None = None) -> Path:
     CHUNK_DIR.mkdir(parents=True, exist_ok=True)
     dest = CHUNK_DIR / f"{backend_name}.jsonl"
 
@@ -329,14 +473,21 @@ def build(backend_name: str, *, percentile: float = DEFAULT_PERCENTILE) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--backend", default="minilm", choices=[*BACKENDS, "both"])
-    parser.add_argument("--percentile", type=float, default=DEFAULT_PERCENTILE)
+    parser.add_argument("--percentile", type=float,
+                        default=get_config().chunking.percentile)
+    parser.add_argument(
+        "--rules", action="store_true",
+        help="chunk the citable US corpus for rule_chunks instead of the legacy collection",
+    )
     args = parser.parse_args()
 
     names = list(BACKENDS) if args.backend == "both" else [args.backend]
     failures = 0
     for name in names:
         try:
-            build(name, percentile=args.percentile)
+            build_rules(name, percentile=args.percentile) if args.rules else build(
+                name, percentile=args.percentile
+            )
         except MissingCredentials as error:
             print(f"  {name}: SKIPPED -- {error}")
             failures += 1

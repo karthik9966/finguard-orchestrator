@@ -1,159 +1,174 @@
-# High-Level Design
+# HLD as built
 
-**As-built**, 2026-09-08. Every figure here is measured on this repository, not projected.
-Companion documents: [LLD.md](LLD.md) for contracts, [DESIGN.md](DESIGN.md) for the short version.
+Companion to `FinGuard_HLD.docx`. What the architecture is, where the boundaries fell, and which
+HLD claims are enforced by code rather than by intention.
 
 ---
 
-## 1 · Problem
+## §1.1 Scope — what is enforced, not merely stated
 
-An ADGM-regulated private bank receives a monthly ledger of SWIFT MT103 payment messages. A
-compliance analyst must decide which payments warrant a Suspicious Activity Report, and cite the
-regulatory obligation that requires it. Doing that by hand over 220 messages is slow; doing it by
-asking a language model to read all 220 is both expensive and unaccountable — the resulting claims
-cannot be traced back to any specific rule.
+| in scope | where it lives | enforced by |
+|---|---|---|
+| 1a. Knowledge-base ingestion | `src/ingestion/` | `finguard-download` → `finguard-chunk --rules` → `finguard-store --rules`; a manifest with sha256 per source |
+| 1b. Transaction-batch ingestion | `src/ingestion/batch.py` | `TransactionBatchIngestor` → `(records, ValidationReport)` |
+| 2. Rule KB + retrieval | `src/retrieval/` | two tiers, two mechanisms — id lookup and semantic search |
+| 3. Agentic reasoning core | `src/graph/` | five LangGraph nodes, per-candidate loop |
+| 4. Structured report generation | `src/graph/nodes.py` | `ReportGenerationNode`, **no model call** |
+| 5. Serving layer | `src/api/`, `src/ui/` | bearer-authenticated FastAPI; Streamlit over HTTP |
+| 6. Results store | `src/store/results.py` | SQLite/Postgres by URL; immutable reports |
+| Observability | `src/observability/` | Langfuse, self-hosted, redaction on the client |
+| (Offline) eval harness incl. rules-only baseline | `eval/` | *not* importable from `src/` |
 
-**Two constraints shape everything downstream.**
+The last row is a boundary worth naming: **nothing under `src/` imports anything from `eval/`.** That
+is the property that stops an evaluation fixture from quietly becoming production behaviour.
 
-*A miss is a regulatory failure; a false alarm costs about five analyst-minutes.* The system is
-therefore tuned for recall, and its second stage exists to narrow the resulting over-selection.
+Out of scope, and enforced:
 
-*A citation that cannot be resolved to a stored clause is worthless* — worse than worthless, since
-it looks like authority. Traceability is a hard requirement, not a feature.
+- **Non-US law** — `RuleChunk.jurisdiction` rejects anything but `US` on the model itself. ObliQA's
+  ADGM corpus is fenced into `obliqa_benchmark`, never retrieved from at runtime, kept only because
+  its 2,786 labelled questions are the sole ground truth this project has for retrieval quality.
+- **Cross-month memory** — no state crosses a batch, which is what bounds every detector's window by
+  construction rather than by a check.
+- **Excluded typologies** — `OUT_OF_SCOPE_TYPOLOGIES` keeps them in the ledgers as *unflagged*
+  context, so precision is measurable against activity that genuinely looks odd, and never plants
+  them as cases: a detector is not expected to find them and seeding one would dilute recall.
 
-## 2 · Shape of the solution
+## §2 Architecture — three zones plus observability
 
 ```
- batch PDF (220 MT103 messages)
-        │
-        ▼
-  ┌───────────────────────────── deterministic, $0.00 ─────────────────────────────┐
-  │  parse      regex state machine        →  220 typed Wire records               │
-  │  detect     four shape primitives      →  ~1-16 Candidates (geometry only)     │
-  │  route      candidates == [] ?          →  END at $0.00, with a written report │
-  │  audit      shape → obligation queries  →  ≤24 clauses from ChromaDB           │
-  └────────────────────────────────────────┬───────────────────────────────────────┘
-                                           ▼
-  ┌────────────────────────────── judgement, ~$0.10 ──────────────────────────────┐
-  │  draft      gpt-4o          findings connecting patterns to clauses            │
-  │  critic     Python veto, then gpt-4o support score                             │
-  │             └── thin? → back to audit with a reformulated query (max 2)        │
-  │  generate   gpt-4o bound to ComplianceReport, then Python repairs 3 fields     │
-  └───────────────────────────────────────────────────────────────────────────────┘
+   ┌── Serving & Cockpit ─────────────────────────────────────────────┐
+   │  FastAPI (bearer)        Streamlit cockpit ── httpx ──┐          │
+   │      │  single worker, one job at a time              │          │
+   └──────┼──────────────────────────────────────────────────┼─────────┘
+          │                                                 │
+   ┌──────▼── Reasoning Core ──────────────────┐   ┌─────────▼─────────┐
+   │  detection → retrieval → grounding →      │   │  Results store    │
+   │  critique ⟲ (per candidate) → report      │   │  reports (frozen) │
+   └──────┬────────────────────────┬───────────┘   │  findings.status  │
+          │                        │               │  reviews (append) │
+   ┌──────▼── Ingestion ──────┐  ┌─▼─ Grounding ──┐│  jobs             │
+   │  MT103 → TransactionRecord│  │ Chroma         │└───────────────────┘
+   │  light-model rescue ×1    │  │ rule_chunks    │
+   │  quarantine the rest      │  │ MiniLM+FlashRank│
+   └───────────────────────────┘  └────────────────┘
+                    └── Langfuse (self-hosted), redacted ──┘
 ```
 
-Four of the seven nodes never reach a model. A batch that produces no candidates terminates at
-**$0.0000** with a written negative result — silence would be indistinguishable from a crash.
+The build-once rulebook path (`download → chunk → store`) is separate from the per-run transaction
+path, and they meet only at retrieval. That separation is why re-indexing the corpus does not mean
+rebuilding the image, and why `chroma_db` mounts rather than being copied in.
 
-## 3 · Why a graph
+## §2.2 The three journeys, as built
 
-`parse → … → generate` is a straight line that a `for` loop expresses perfectly well. The edge
-that justifies LangGraph is **`critic → audit`**: a critic that can only approve or reject is a
-filter; one that can reformulate the question and send execution back to retrieval is the
-difference between a report that says *"no clause covers this"* and one that goes and finds the
-clause.
+**Journey 1 — monthly audit, human in the loop.** An analyst uploads in the cockpit; the cockpit
+POSTs to the API; the API queues one job on a single worker; the cockpit polls. The report renders
+with each finding's own clauses, and clear / escalate / approve write to the store. Verified live end
+to end on the clean control at $0.0000.
 
-It returns to **retrieval**, not to drafting, deliberately — a thin finding is usually missing law
-rather than bad prose, and re-drafting the same material cannot fix that.
+**Journey 2 — automated API run.** `POST /audits` with a bearer token → 202 + `job_id`, or
+`?wait=true` for one round trip. See [DESIGN.md](DESIGN.md) deviation 3 for why both exist.
 
-## 4 · Component view
+**Journey 3 — audit-defence lookup.** `GET /reports?period=YYYY-MM` then `GET /reports/{id}`. No
+re-analysis: the stored report carries the rule *as cited at the time*. The distinction that makes
+this work is described under §5 below.
 
-| component | responsibility | model? |
+## §4 Model tiering
+
+Two model roles, named separately so the reservation is real rather than aspirational:
+
+| role | setting | used for |
 |---|---|---|
-| `ingestion/` | 46 documents → 12,273 chunks → ChromaDB, tiered by AML relevance | local embeddings |
-| `utils/swift_parser` | MT103 → `Wire`. Refuses rather than guesses | no |
-| `utils/detectors` | four geometric primitives → `Candidate` | no |
-| `graph/prompts` | shape → obligation-shaped queries; all prompt text | no |
-| `graph/nodes` | the seven node functions and two routers | 3 calls |
-| `graph/rerank` | cross-encoder reordering of each query's 15 hits | local, 3 MB |
-| `graph/cost` | per-node token and dollar accounting | no |
-| `utils/cache` | Redis cache for retrieved clauses | local embeddings |
-| `ui/cockpit` · `api/main` | the two front doors | — |
+| reasoning | `REASONING_MODEL` (default `gpt-4o`) | grounding, critique |
+| light | `LIGHT_MODEL` (default `gpt-4o-mini`) | the extraction rescue, once per refused message |
 
-## 5 · Data
+Everything else runs in-environment: MiniLM embeddings, Chroma, FlashRank's cross-encoder. A clean
+month therefore costs **$0.0000** — not "almost nothing", zero, because the model client is never
+constructed.
 
-**Transactions** — SAML-D (Kaggle), rendered into synthetic MT103 logs by `pdf_generator.py`,
-which also writes `ledger_labels.csv`: the answer key naming every planted laundering wire and its
-typology. Four batches of 220. One (2023-05) is a deliberate clean control.
+## §5 Privacy
 
-**Regulations** — ObliQA (40 ADGM documents) plus FINRA/FinCEN advisories. Semantically chunked,
-embedded with `all-MiniLM-L6-v2`, stored in one ChromaDB collection with a relevance tier.
+The HLD's posture is a hosted frontier model under zero-data-retention, with identifiers stripped
+before any external call. As built, there is exactly one redaction function and it guards both exits:
 
-Both corpora are gitignored and reproducible from `data/MANIFEST.json`.
+1. the grounding context, before it reaches the model, and
+2. the observability payload, before it reaches Langfuse.
 
-## 6 · Three cross-cutting decisions
+One function for both, so they cannot drift. Accounts are **pseudonymised** rather than anonymised —
+`ACCT-` plus eight hex characters, stable per account — because a fan-in narrative that cannot say
+"these eleven senders all paid the same account" is useless and an analyst has to be able to map a
+finding back to the ledger. Determinism is bought with reversibility, and `REDACTION_PEPPER` breaks
+the correlation at the cost of cross-run comparability; on synthetic data the default is the right
+trade, and stating it is better than implying an anonymity guarantee that is not there.
 
-**Tiering, not filtering by document.** All 40 ObliQA documents are indexed; 2.9% of passages are
-AML-bearing and the rest are the distractor set that makes Context Precision measurable at all.
-Tier 1 opens by default, tier 2 when a candidate has a cross-border leg — a deterministic rule,
-because the alternative is putting a 46-document inventory into every prompt.
+**Memos are scrubbed, not dropped.** A memo line is the one realistic prompt-injection vector a
+payment message has, so removing it would make the injection fixtures vacuous. The text reaches the
+prompt as inert data with identifier-shaped substrings masked, and the grounding system prompt names
+it as untrusted.
 
-**No transaction vectors.** Measured on 220 messages, laundering and clean wires separate by
-+0.029 cosine — noise, since ~55 of ~65 tokens are boilerplate. Parsed wires belong in a table
-queried with pandas, not in a vector store.
+Transaction references and amounts survive deliberately. A trace or a report that cannot say *which*
+transactions a finding covers, or for how much, is not usable as an audit record.
 
-**The router fires on `candidates == []`.** The blueprint's predicate ("contains a cross-border
-wire") can never fire: cross-border is 9.77% of SAML-D, so a fully domestic 220-wire batch has
-probability 1.5 × 10⁻¹⁰. Routing on an empty candidate list is the decision that actually saves
-money, and it is evaluated *after* two free nodes.
+## §6 Observability
 
-## 7 · Trust boundaries
+Langfuse, self-hosted, so traces carrying reasoning over transaction data stay in-environment.
 
-The model is untrusted for anything checkable. Three mechanisms enforce that:
+**The defect this closed was measured.** The pre-migration system traced to a hosted project and
+uploaded ~137 KB per run — every parsed wire with its counterparty names, account numbers and
+addresses, of which about 21 ever reached a model. Every span records its inputs and outputs and
+`parse` was a node, so the whole book went up as a side effect of instrumenting the graph.
 
-| mechanism | catches | where |
-|---|---|---|
-| **citation veto** — cited clause absent from retrieval ⇒ `score = 0.0` | fabricated law | `critic_node` |
-| **evidence repair** — `flagged_wires`, `source_document_hashes` recomputed | wrong identifiers in a filing | `generate_node` |
-| **rating cap** — High requires confidence ≥ 0.9 | over-claiming on a thin finding | `generate_node` |
+The fix is one line, set on the client rather than at call sites:
 
-Each exists because the failure was **observed**, not anticipated. The model returned account
-numbers where wire references belong; returned an empty hash list beside a live citation; and
-rated a clean batch High. On 2026-09-08 the veto fired on a live May run against two genuinely
-fabricated citations.
+```python
+mask = lambda data: trim(redact(data))
+```
 
-## 8 · Deployment
+`redact` decides what may leave at all; `trim` decides how much is worth sending, because
+pseudonymised bulk is still bulk. Measured on the clean control, captured from the OpenTelemetry
+exporter rather than estimated: **~137 KB → 9.2 KB across 5 spans, zero account numbers, zero
+counterparty names**, and the parsed ledger replaced by `[500 record(s) — omitted from the trace]`.
 
-Three interfaces over one engine — none contains audit logic; all call `build_graph()`:
+Tagging follows §6: run and batch id, period, record count and client tier at run level; node,
+candidate index and `loop:N` per span; and one `critique` score **per finding** rather than per run,
+so four confident findings and one the review could not stand behind do not average into a single
+reassuring number.
 
-- **CLI** — `finguard-audit`, plus eight sibling commands for the ingestion pipeline
-- **Streamlit cockpit** — upload, live node-by-node tracker, report, citations drawer, telemetry
-- **FastAPI** — `POST /audit` returns an id and works in the background; a 40-second synchronous
-  request is a timeout waiting for a proxy to find it
+Tracing is entirely optional. With no keys configured every function is a no-op — verified live: a run
+with tracing on and Langfuse unreachable completes normally, reports its target honestly, and costs
+$0.0000. An audit must not fail because an observability stack is down.
 
-Packaged as a 3.13 GB multi-stage image (CPU-only torch, models baked in, `HF_HUB_OFFLINE=1`), with
-ChromaDB mounted rather than copied. `docker-compose.yml` brings the API and Redis up together.
+## §3 Caching — deliberately absent
 
-## 9 · Observability
+The pre-migration system cached retrieved clauses in Redis and it measurably worked (audit node 44.0s
+→ 0.0s warm, 7/7 hits, context byte-identical). It is gone, because the new design removed the
+conditions that made it pay: a monthly batch has no high-frequency duplicate-query volume, and
+per-candidate retrieval makes each query more specific than the batch-level ones that used to repeat.
+Recorded rather than deleted silently — if profiling shows repeated work, the measurement to restore
+is in [CHANGELOG.md](CHANGELOG.md).
 
-LangSmith traces every node — not only model calls, since LangGraph compiles each node into a
-Runnable. A run emits 16 spans (13 `chain`, 3 `llm`) under one `audit_id` that is also the API's
-resource id. Run-level metadata carries identity; per-call metadata carries node, loop number and
-clause count, which is what makes *"which context caused the loop"* answerable.
+## §5 (results store) — the decision that shapes Journey 3
 
-**One consequence, stated plainly:** tracing uploads full node inputs and outputs — 137 KB per run,
-including all 220 parsed wires with names and account numbers, most of which no model ever sees.
-Fine for a synthetic ledger, a real decision before pointing it at live payment data.
+`reports.report_json` is written once and never updated. `findings.status` is exactly what review
+changes. Those two facts are in tension, and the resolution is that **reads return a join**:
 
-Cost is measured locally as well, via a callback (three of four model calls use structured output,
-which discards the token counts), so spend is visible with tracing off.
-
-## 10 · Measured characteristics
-
-| | |
+| endpoint | returns |
 |---|---|
-| parsing | **880/880** wires, every field matching the answer key |
-| detection | **100% recall** (52/52), 32% precision, 164/660 wires swept |
-| retrieval | hit@15 79.2%; reranking lifts hit@1 45.2% → 55.6% |
-| cost | **$0.047–$0.178** per batch, median $0.093; $0.0000 on the free path |
-| latency | ~45s cold, ~24s warm cache |
-| tests | **233**, ~40s, no API key, no network |
+| `GET /reports/{id}` | the frozen report re-hydrated with each finding's *current* status and review trail |
+| `GET /reports/{id}/filed` | the same report exactly as the engine produced it |
 
-## 11 · Known limits
+A regulator asking what the system concluded in June must get an answer later human review cannot
+have edited; an analyst asking where the work stands must get the current state. Reading
+`report_json` alone would show every finding as `pending_review` for ever, however much review had
+happened — which is the bug the join exists to prevent. Reviews are append-only, because a status
+column answers "where is this now" and nothing about how it got there.
 
-- **Risk rating does not reliably separate clean from dirty batches.** Deferred; a failing test.
-- **17.2% of gold questions have no correct clause in the top 15.** A retrieval ceiling that
-  reranking cannot lift — it reorders, it cannot add.
-- **Detector precision 32%.** Deliberate, given the recall trade.
-- **Single-instance API.** The audit registry is an in-process dict.
-- **`ainvoke` over synchronous nodes** — correct, non-blocking, but not true async.
+## Deployment
+
+`docker compose up -d api ui` for the engine and the cockpit; `docker compose up -d` adds the
+Langfuse stack. Six services for Langfuse rather than two — v3 split storage across Postgres,
+ClickHouse, MinIO and Redis, and the SDK here speaks the OpenTelemetry endpoint only v3+ serves.
+`api` and `ui` refuse to start without `LLM_API_KEY` and `API_AUTH_TOKEN`; every `LANGFUSE_*`
+variable has a default, because tracing being unconfigured must mean *off* rather than *broken*.
+
+The compose file is configuration-validated and has **not been run**: it needs a Docker daemon that
+was not available on the machine this was built on.

@@ -7,14 +7,18 @@ logic is tested with a stub encoder so the suite stays fast and offline.
 from __future__ import annotations
 
 import json
+import re
 import unicodedata
 from pathlib import Path
 
 import numpy as np
 import pytest
+from pypdf import PdfReader
 
+from src.ingestion import chunker
+
+from src.config import get_config
 from src.ingestion.chunker import (
-    MAX_CHARS,
     adjacent_distances,
     assemble,
     boundary_indices,
@@ -137,7 +141,7 @@ def test_glossary_table_splits_by_row_not_by_prose():
     )
     chunks = chunk_semantic(passage["Passage"], stub_encoder)
     assert len(chunks) > 50
-    assert all(len(chunk) <= MAX_CHARS for chunk in chunks)
+    assert all(len(chunk) <= get_config().chunking.max_chars for chunk in chunks)
     assert sum("Defined Terms | Definitions" in chunk for chunk in chunks) == len(chunks) - 1
 
 
@@ -182,8 +186,9 @@ def chunks() -> list[dict]:
 
 
 def test_no_chunk_exceeds_the_budget(chunks):
-    oversized = [c["chunk_id"] for c in chunks if len(c["text"]) > MAX_CHARS]
-    assert not oversized, f"{len(oversized)} chunks over {MAX_CHARS} chars: {oversized[:3]}"
+    budget = get_config().chunking.max_chars
+    oversized = [c["chunk_id"] for c in chunks if len(c["text"]) > budget]
+    assert not oversized, f"{len(oversized)} chunks over {budget} chars: {oversized[:3]}"
 
 
 def test_every_chunk_is_citable(chunks):
@@ -237,3 +242,102 @@ def test_aml_rulebook_suspicion_guidance_is_present_and_whole(chunks):
     joined = " ".join(c["text"] for c in matches)
     assert "structured to avoid detection" in joined
     assert all(c["relevance_tier"] == 1 and c["jurisdiction"] == "ADGM" for c in matches)
+
+# =============================================================================================
+# Tier-aware splitting (Phase 1b) -- law splits by its own lettering, guidance by indicator.
+#
+# These run against the real acquired artifacts rather than fixtures. A fixture would pin what I
+# believed eCFR XML looks like; the file pins what it is.
+# =============================================================================================
+
+CFR_DIR = Path(__file__).resolve().parents[1] / "data" / "raw" / "regulations" / "cfr"
+USC_DIR = Path(__file__).resolve().parents[1] / "data" / "raw" / "regulations" / "usc"
+FFIEC_DIR = Path(__file__).resolve().parents[1] / "data" / "raw" / "regulations" / "ffiec"
+needs_corpus = pytest.mark.skipif(
+    not (CFR_DIR / "31cfr1020.320.xml").exists(),
+    reason="US corpus not acquired -- run: uv run finguard-download",
+)
+
+
+def test_a_designator_series_advances_and_pops():
+    stack: list[tuple[str, str]] = []
+    assert chunker.paragraph_ref(stack, "a") == "(a)"
+    assert chunker.paragraph_ref(stack, "1") == "(a)(1)"
+    assert chunker.paragraph_ref(stack, "2") == "(a)(2)"
+    assert chunker.paragraph_ref(stack, "i") == "(a)(2)(i)"
+    assert chunker.paragraph_ref(stack, "b") == "(b)", "a new letter pops back to the top level"
+
+
+def test_the_same_designator_can_sit_at_two_depths():
+    """31 CFR 1020.320(e) contains (1) at depth two and again at depth five. Resolving by type
+    alone collapses the second onto the first and two different obligations share a citation."""
+    stack: list[tuple[str, str]] = []
+    for label in ("e", "1", "ii", "A"):
+        chunker.paragraph_ref(stack, label)
+    assert chunker.paragraph_ref(stack, "1") == "(e)(1)(ii)(A)(1)"
+    assert chunker.paragraph_ref(stack, "2") == "(e)(1)(ii)(A)(2)"
+    assert chunker.paragraph_ref(stack, "2") == "(e)(2)", "and it still knows how to come back up"
+
+
+@needs_corpus
+def test_the_sar_rule_splits_into_its_own_paragraph_structure():
+    chunks = chunker.split_cfr_xml((CFR_DIR / "31cfr1020.320.xml").read_text())
+    refs = [ref for ref, _ in chunks]
+
+    assert refs[0] == "§ 1020.320(a)"
+    assert "§ 1020.320(a)(2)(iii)" in refs, "the no-lawful-purpose limb is citable on its own"
+    assert "§ 1020.320(e)(1)(ii)(A)(2)(i)" in refs, "six levels deep, not flattened"
+    assert refs[-1] == "§ 1020.320(g)"
+    assert len(refs) == len(set(refs)), "a duplicate ref is a chunk_id collision"
+
+
+@needs_corpus
+def test_the_structuring_prohibition_is_reachable_by_its_citation():
+    """§ 5324(a)(3) is the limb every structuring finding rests on, and Phase 1c's obligation map
+    resolves it by exactly this ref."""
+    raw = (USC_DIR / "31usc5324.txt").read_text()
+    body = re.split(r"\n\(Added Pub|\nEditorial Notes", raw[raw.find("§5324."):])[0]
+    chunks = dict(chunker.split_by_section(body, section="§ 5324"))
+
+    assert "structure or assist in structuring" in chunks["§ 5324(a)(3)"]
+
+
+@needs_corpus
+def test_every_indicator_becomes_its_own_chunk():
+    """One indicator per chunk is what makes "which indicator matched" answerable. Appendix F is
+    the densest source in the corpus."""
+    text = "\n".join(page.extract_text() or "" for page in PdfReader(FFIEC_DIR / "ffiec-appendix-f.pdf").pages)
+    bullets = chunker.split_red_flag_bullets(text, fallback_heading="Appendix F")
+
+    assert len(bullets) > 100
+    assert len({ref for ref, _ in bullets}) == len(bullets), "refs must be unique"
+    # The heading a structuring finding cites. Appendix F's own wording, not a paraphrase.
+    assert any("Efforts to Avoid Reporting" in ref for ref, _ in bullets)
+
+
+@needs_corpus
+@pytest.mark.parametrize("name", [p.stem for p in sorted(FFIEC_DIR.glob("*.pdf"))])
+def test_no_indicator_is_filed_under_page_furniture(name):
+    """A footer read as a heading gives a citation no reviewer can look up -- and the footers here
+    carry a page number, so they never repeat literally."""
+    text = "\n".join(page.extract_text() or "" for page in PdfReader(FFIEC_DIR / f"{name}.pdf").pages)
+    for ref, _ in chunker.split_red_flag_bullets(text, fallback_heading=name):
+        heading = ref.rsplit(" ¶", 1)[0]
+        assert "Examination Manual" not in heading, f"{name}: footer used as a heading"
+
+
+def test_a_wrapped_sentence_is_not_a_heading():
+    """PDF extraction wraps prose at the page width, so a sentence's first line looks exactly like
+    a heading. This one collected thirteen indicators before the comma test rejected it."""
+    assert not chunker._is_heading("In May 2009, the Basel Committee on Banking Supervision is")
+    assert chunker._is_heading("Funds Transfers")
+    assert chunker._is_heading("Other Unusual or Suspicious Customer Activity")
+
+
+def test_page_chrome_is_found_despite_changing_page_numbers():
+    lines = [
+        "Manual F-8 2/27/2015.V2", "• first indicator",
+        "Manual F-9 2/27/2015.V2", "• second indicator",
+    ]
+    assert chunker._page_chrome(lines) == {"Manual F-8 2/27/2015.V2", "Manual F-9 2/27/2015.V2"}
+

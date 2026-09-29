@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 from functools import lru_cache
 from collections import Counter
 from datetime import datetime, timezone
@@ -30,6 +31,7 @@ from pathlib import Path
 import chromadb
 from chromadb.config import Settings
 
+from src.config import get_config
 from src.ingestion.embeddings import BACKENDS, MissingCredentials, get_backend
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -38,8 +40,6 @@ CHUNK_DIR = PROJECT_ROOT / "data" / "processed" / "chunks"
 PERSIST_DIR = Path(os.environ.get("CHROMA_PERSIST_DIR", PROJECT_ROOT / "chroma_db"))
 COLLECTION_NAME = os.environ.get("CHROMA_COLLECTION", "regulations")
 
-UPSERT_BATCH = 1000
-DEFAULT_K = 15
 
 # Chroma stores the text in `documents` and everything else in `metadatas`; these two are not
 # metadata. `passage_uuid` stays -- it is ObliQA's real primary key and worth keeping for tracing.
@@ -118,17 +118,305 @@ def build(backend_name: str = "minilm", *, rebuild: bool = False) -> dict:
         print(f"  embedding {len(records):,} chunks with {backend.model_id} ...")
         vectors = backend.encode([r["text"] for r in records])
 
-        for start in range(0, len(records), UPSERT_BATCH):
-            block = records[start : start + UPSERT_BATCH]
+        batch = get_config().ingestion.upsert_batch
+        for start in range(0, len(records), batch):
+            block = records[start : start + batch]
             collection.upsert(
                 ids=[r["chunk_id"] for r in block],
-                embeddings=vectors[start : start + UPSERT_BATCH].tolist(),
+                embeddings=vectors[start : start + batch].tolist(),
                 documents=[r["text"] for r in block],
                 metadatas=[clean_metadata(r) for r in block],
             )
-            print(f"    upserted {min(start + UPSERT_BATCH, len(records)):>6,}/{len(records):,}")
+            print(f"    upserted {min(start + batch, len(records)):>6,}/{len(records):,}")
 
     return stats()
+
+
+# --- VectorStoreClient (LLD §2.1, §3.2, §6) -------------------------------------------
+#
+# A class rather than more module functions because the new design needs two collections at once
+# -- `rule_chunks` for citable US law and `obliqa_benchmark` for the reproducible hit@k arm --
+# and because `resolve()` has to exist before Phase 1c can curate an obligation map against it.
+#
+# The module functions below stay as they are and delegate here: they have live callers in the
+# cockpit, the benchmark and 300-odd tests, and the migration's promise is that the suite is green
+# at the end of every phase. Phase 5 removes the wrappers when the last caller goes.
+
+RULE_COLLECTION = "rule_chunks"
+TOPIC_SEPARATOR = "|"
+
+# LLD §6: VECTOR_STORE_UNAVAILABLE is retryable -- back off, and if it stays down fail the job
+# with a clear error. The one thing not to do is proceed: a run that cannot retrieve cannot
+# ground, and an ungrounded finding is the failure this system exists to prevent.
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+
+
+class VectorStoreUnavailable(RuntimeError):
+    """The store could not be reached after retrying. Fail the job; never fabricate a citation."""
+
+
+def pack_topics(tags: list[str] | str | None) -> str:
+    """Chroma metadata is scalar-only, so ``topic_tags`` travels as a delimited string."""
+    if isinstance(tags, str):
+        return tags
+    return TOPIC_SEPARATOR.join(tags or [])
+
+
+def unpack_topics(packed: object) -> list[str]:
+    if not packed or not isinstance(packed, str):
+        return []
+    return [tag for tag in packed.split(TOPIC_SEPARATOR) if tag]
+
+
+class VectorStoreClient:
+    """Reads and writes one Chroma collection.
+
+    Every call goes through :meth:`_with_retry`, so a store that is briefly unreachable costs a
+    pause rather than the run.
+    """
+
+    def __init__(self, collection: str = RULE_COLLECTION, *, backend_name: str = "minilm") -> None:
+        self.collection_name = collection
+        self.backend_name = backend_name
+
+    # --- plumbing ----------------------------------------------------------------------
+
+    def _with_retry(self, what: str, call):
+        last: Exception | None = None
+        for attempt in range(RETRY_ATTEMPTS):
+            try:
+                return call()
+            except Exception as error:  # noqa: BLE001 - re-raised below as a typed failure
+                last = error
+                if attempt + 1 < RETRY_ATTEMPTS:
+                    time.sleep(RETRY_BACKOFF_SECONDS * (2**attempt))
+        raise VectorStoreUnavailable(
+            f"{what} failed after {RETRY_ATTEMPTS} attempts against "
+            f"{self.collection_name!r}: {last}"
+        ) from last
+
+    def _collection(self, *, create: bool = False, records: int = 0):
+        client = _client()
+        if not create:
+            return client.get_collection(self.collection_name)
+        with get_backend(self.backend_name) as backend:
+            existing = next(
+                (c for c in client.list_collections() if c.name == self.collection_name), None
+            )
+            if existing is not None and existing.metadata.get("backend") not in (
+                None, self.backend_name
+            ):
+                raise BackendMismatch(
+                    f"collection {self.collection_name!r} was built with "
+                    f"{existing.metadata['backend']!r}; rebuild to replace it"
+                )
+            return client.get_or_create_collection(
+                name=self.collection_name,
+                metadata={
+                    "hnsw:space": "cosine",
+                    "backend": self.backend_name,
+                    "model": backend.model_id,
+                    "built": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "chunks": records,
+                },
+            )
+
+    # --- writing -----------------------------------------------------------------------
+
+    def upsert(self, records: list[dict], vectors) -> int:
+        """Write chunks in batches. ``records`` are RuleChunk-shaped dicts."""
+        collection = self._collection(create=True, records=len(records))
+        batch = get_config().ingestion.upsert_batch
+        for start in range(0, len(records), batch):
+            block = records[start : start + batch]
+            metadatas = []
+            for record in block:
+                meta = clean_metadata({**record, "topic_tags": pack_topics(record.get("topic_tags"))})
+                metadatas.append(meta)
+            self._with_retry(
+                "upsert",
+                lambda block=block, metadatas=metadatas, start=start: collection.upsert(
+                    ids=[r["chunk_id"] for r in block],
+                    embeddings=vectors[start : start + batch].tolist(),
+                    documents=[r["text"] for r in block],
+                    metadatas=metadatas,
+                ),
+            )
+        return len(records)
+
+    # --- reading -----------------------------------------------------------------------
+
+    def similarity_search(self, embedding, *, where: dict | None = None, k: int = 15) -> list[dict]:
+        """Nearest chunks, filtered by **arbitrary** metadata.
+
+        The old module-level ``retrieve`` could only filter ``relevance_tier`` with ``$in``. The
+        new retrieval model filters on tier, authority and topic at once, so the filter is the
+        caller's to compose.
+        """
+        collection = self._collection()
+        result = self._with_retry(
+            "similarity_search",
+            # float() per element: a numpy row arrives as np.float32 values, which Chroma
+            # rejects with a message about lists of floats -- true, and unhelpfully so.
+            lambda: collection.query(
+                query_embeddings=[[float(value) for value in embedding]],
+                n_results=k,
+                where=where or None,
+            ),
+        )
+        return [
+            {
+                "chunk_id": cid,
+                "text": document,
+                "score": 1.0 - distance,
+                "distance": distance,
+                **{**meta, "topic_tags": unpack_topics(meta.get("topic_tags"))},
+            }
+            for cid, document, distance, meta in zip(
+                result["ids"][0],
+                result["documents"][0], # type: ignore
+                result["distances"][0], # type: ignore
+                result["metadatas"][0], # type: ignore
+            )
+        ]
+
+    def get_by_ids(self, chunk_ids: list[str]) -> dict[str, dict]:
+        """Fetch by id, for the citations drawer and for resolved obligations."""
+        if not chunk_ids:
+            return {}
+        collection = self._collection()
+        found = self._with_retry(
+            "get_by_ids",
+            lambda: collection.get(
+                ids=list(dict.fromkeys(chunk_ids)), include=["documents", "metadatas"]
+            ),
+        )
+        return {
+            cid: {
+                "chunk_id": cid,
+                "text": document,
+                **{**(meta or {}), "topic_tags": unpack_topics((meta or {}).get("topic_tags"))},
+            }
+            for cid, document, meta in zip(
+                found["ids"], found["documents"] or [], found["metadatas"] or [] # type: ignore
+            )
+        }
+
+    def resolve(self, reference: tuple[str, str]) -> str | None:
+        """``(source_id, section_ref)`` → ``chunk_id``, or None if it is not in the store.
+
+        Phase 1c curates the obligation map as these pairs rather than as literal ids precisely
+        because ``chunk_id = hash(source_id, section_ref, version)``: a re-chunk or a version bump
+        invalidates a literal id with no error, and per LLD §6 an OBLIGATION_MAP_MISS disables
+        grounding for a whole typology. Resolving at load turns that into a startup failure.
+        """
+        source_id, section_ref = reference
+        collection = self._collection()
+        found = self._with_retry(
+            "resolve",
+            lambda: collection.get(
+                where={"$and": [{"source_id": source_id}, {"section_ref": section_ref}]},
+                include=["metadatas"],
+                limit=1,
+            ),
+        )
+        ids = found.get("ids") or []
+        return ids[0] if ids else None
+
+    def counts(self) -> dict[str, dict[str, int]]:
+        """Chunk counts per tier and per authority -- Phase 1b's green criterion."""
+        collection = self._collection()
+        everything = self._with_retry(
+            "counts", lambda: collection.get(include=["metadatas"])
+        )
+        tiers: Counter[str] = Counter()
+        authorities: Counter[str] = Counter()
+        for meta in everything["metadatas"] or []:
+            tiers[str(meta.get("tier", "-"))] += 1
+            authorities[str(meta.get("authority", "-"))] += 1
+        return {"tier": dict(tiers), "authority": dict(authorities), "total": collection.count()}
+
+
+BENCHMARK_COLLECTION = "obliqa_benchmark"
+
+
+def build_benchmark(backend_name: str = "minilm", *, rebuild: bool = False) -> dict:
+    """Index ObliQA into its own collection, away from the citable corpus.
+
+    ObliQA is ADGM law and the new design puts non-US rulebooks out of scope, but the 2,786
+    labelled questions are the only ground truth this project has for retrieval quality -- the
+    reranker was adopted on them, and hit@1 45.2% -> 55.6% is a regression floor. So it stays,
+    fenced off: `rule_chunks` cannot serve an ADGM clause as a citation, and the benchmark keeps
+    reproducing.
+    """
+    source = chunk_path(backend_name)
+    if not source.exists():
+        raise SystemExit(f"{source.name} missing -- run: uv run finguard-chunk --backend {backend_name}")
+    records = [
+        record
+        for line in source.read_text().splitlines()
+        if (record := json.loads(line))["corpus"] == "obliqa"
+    ]
+    if not records:
+        raise SystemExit(f"{source.name} holds no ObliQA chunks")
+
+    store = VectorStoreClient(BENCHMARK_COLLECTION, backend_name=backend_name)
+    if rebuild:
+        try:
+            _client().delete_collection(BENCHMARK_COLLECTION)
+            print(f"  dropped existing collection {BENCHMARK_COLLECTION!r}")
+        except Exception:  # noqa: BLE001 - absent collection is the normal case
+            pass
+
+    with get_backend(backend_name) as backend:
+        print(f"  embedding {len(records):,} ObliQA chunks with {backend.model_id} ...")
+        vectors = backend.encode([r["text"] for r in records])
+
+    store.upsert(records, vectors)
+    total = store.counts()["total"]
+    print(f"  {BENCHMARK_COLLECTION}: {total:,} chunks")
+    return {"collection": BENCHMARK_COLLECTION, "chunks": total}
+
+
+def build_rules(backend_name: str = "minilm", *, rebuild: bool = False) -> dict:
+    """Index the citable US corpus into `rule_chunks`.
+
+    Every record is validated as a ``RuleChunk`` before it is written. The model rejects a
+    non-US jurisdiction on the model itself, so an ADGM clause cannot reach a citation even if a
+    metadata filter is later written wrongly -- which is the failure this collection exists to
+    make impossible.
+    """
+    from src.ingestion.loader import rules_path
+    from src.models import RuleChunk
+
+    source = rules_path(backend_name)
+    if not source.exists():
+        raise SystemExit(
+            f"{source.name} missing -- run: uv run finguard-chunk --rules --backend {backend_name}"
+        )
+    records = [json.loads(line) for line in source.read_text().splitlines()]
+    for record in records:
+        RuleChunk(**{k: v for k, v in record.items() if k != "source_file"})
+
+    store = VectorStoreClient(RULE_COLLECTION, backend_name=backend_name)
+    if rebuild:
+        try:
+            _client().delete_collection(RULE_COLLECTION)
+            print(f"  dropped existing collection {RULE_COLLECTION!r}")
+        except Exception:  # noqa: BLE001 - absent collection is the normal case
+            pass
+
+    with get_backend(backend_name) as backend:
+        print(f"  embedding {len(records):,} rule chunks with {backend.model_id} ...")
+        vectors = backend.encode([r["text"] for r in records])
+
+    store.upsert(records, vectors)
+    counts = store.counts()
+    print(f"  {RULE_COLLECTION}: {counts['total']:,} chunks")
+    print(f"    by tier      {counts['tier']}")
+    print(f"    by authority {counts['authority']}")
+    return counts
 
 
 @lru_cache(maxsize=1)
@@ -149,7 +437,7 @@ def by_id(chunk_ids: list[str]) -> dict[str, dict]:
     """Fetch stored chunks by id -- the lookup §6.4's citations drawer needs.
 
     ``retrieve`` searches by vector and is the wrong tool here: the drawer already knows exactly
-    which clauses to show, because ``generate_node`` derived ``source_document_hashes`` from the
+    which clauses to show, because report generation derived the cited clause ids from the
     retrieved set in Python rather than trusting the model to report them. Re-searching would
     risk returning a *different* clause than the one the report was actually grounded in, which
     defeats the entire purpose of an audit trail.
@@ -175,7 +463,7 @@ def by_id(chunk_ids: list[str]) -> dict[str, dict]:
 def retrieve(
     query: str,
     *,
-    k: int = DEFAULT_K,
+    k: int | None = None,
     tiers: list[int] | None = None,
     backend_name: str | None = None,
 ) -> list[dict]:
@@ -187,6 +475,7 @@ def retrieve(
     facts ranked it 315th -- rulebooks are written as duties, so descriptions of events share
     no register with them.
     """
+    k = get_config().retrieval.k_indicators if k is None else k
     client = _client()
     collection = client.get_collection(COLLECTION_NAME)
     built_with = collection.metadata.get("backend")
@@ -268,12 +557,38 @@ def main() -> int:
     parser.add_argument("--backend", default="minilm", choices=list(BACKENDS))
     parser.add_argument("--rebuild", action="store_true", help="drop the collection first")
     parser.add_argument("--stats", action="store_true", help="report on the existing collection")
+    parser.add_argument(
+        "--rules", action="store_true", help=f"build {RULE_COLLECTION!r} from the US corpus"
+    )
+    parser.add_argument(
+        "--rule-stats", action="store_true", help=f"chunk counts per tier in {RULE_COLLECTION!r}"
+    )
+    parser.add_argument(
+        "--benchmark", action="store_true",
+        help=f"build {BENCHMARK_COLLECTION!r} -- ObliQA, fenced off from the citable corpus",
+    )
     parser.add_argument("--query", help="run a retrieval and print the hits")
     parser.add_argument("--tier", type=int, nargs="*", default=None)
-    parser.add_argument("-k", type=int, default=DEFAULT_K)
+    parser.add_argument("-k", type=int, default=get_config().retrieval.k_indicators)
     args = parser.parse_args()
 
     try:
+        if args.rules:
+            build_rules(args.backend, rebuild=args.rebuild)
+            return 0
+
+        if args.benchmark:
+            build_benchmark(args.backend, rebuild=args.rebuild)
+            return 0
+
+        if args.rule_stats:
+            counts = VectorStoreClient(RULE_COLLECTION, backend_name=args.backend).counts()
+            print(f"{RULE_COLLECTION}: {counts['total']:,} chunks")
+            for label in ("tier", "authority"):
+                for key, value in sorted(counts[label].items()):
+                    print(f"  {label:<10} {key:<14} {value:>5,}")
+            return 0
+
         if args.stats:
             print_stats(stats())
             return 0

@@ -1,0 +1,122 @@
+[
+  {
+    "id": "BL-001", "shape": "fan_in", "scenario": "Monthly payroll collection account",
+    "expected_risk_band": "low",
+    "why_benign": "18 salaried employees remit a fixed voluntary pension contribution to the employer's benefits account on the same day each month. The shape is a textbook fan-in; the amounts are identical month to month and the senders are the same 18 accounts every time.",
+    "spec": {"pattern": "fan_in", "senders": 18, "amount": "450.00", "identical_amounts": true, "recurring_monthly": true, "window_days": 1}
+  },
+  {
+    "id": "BL-002", "shape": "fan_in", "scenario": "Property management rent collection",
+    "expected_risk_band": "low",
+    "why_benign": "24 tenants pay rent into one managing agent's client account in the first week of the month. Amounts differ (different properties) but repeat exactly from month to month.",
+    "spec": {"pattern": "fan_in", "senders": 24, "amount_range": ["875.00", "2400.00"], "recurring_monthly": true, "window_days": 6}
+  },
+  {
+    "id": "BL-003", "shape": "fan_in", "scenario": "Charity appeal after a public campaign",
+    "expected_risk_band": "medium",
+    "why_benign": "A registered charity receives 31 small donations in four days following a televised appeal. Genuinely unusual for the account, which is why medium and not low: the burst has no precedent in the customer's own history, and that is exactly the fact an analyst should look at rather than dismiss.",
+    "spec": {"pattern": "fan_in", "senders": 31, "amount_range": ["20.00", "500.00"], "recurring_monthly": false, "window_days": 4}
+  },
+  {
+    "id": "BL-004", "shape": "fan_out", "scenario": "Payroll disbursement",
+    "expected_risk_band": "low",
+    "why_benign": "One employer account pays 22 employees on the 28th. Identical shape to a dispersal, opposite meaning: same beneficiaries every month, amounts constant, and the paying account's only other activity is receiving customer invoices.",
+    "spec": {"pattern": "fan_out", "recipients": 22, "amount_range": ["1800.00", "4200.00"], "recurring_monthly": true, "window_days": 1}
+  },
+  {
+    "id": "BL-005", "shape": "fan_out", "scenario": "Supplier settlement run",
+    "expected_risk_band": "low",
+    "why_benign": "A wholesaler settles 15 trade suppliers on 30-day terms in one weekly run. The beneficiary list overlaps ~80% week to week.",
+    "spec": {"pattern": "fan_out", "recipients": 15, "amount_range": ["600.00", "18000.00"], "recurring_monthly": true, "window_days": 2}
+  },
+  {
+    "id": "BL-006", "shape": "fan_out", "scenario": "Insurance claim settlements after a storm",
+    "expected_risk_band": "medium",
+    "why_benign": "An insurer pays 40 policyholders within nine days of a named storm. Legitimate, and legitimately unusual -- the volume spike is real and an analyst confirming the event is the right outcome.",
+    "spec": {"pattern": "fan_out", "recipients": 40, "amount_range": ["900.00", "26000.00"], "recurring_monthly": false, "window_days": 9}
+  },
+  {
+    "id": "BL-007", "shape": "structuring", "scenario": "Weekly retail cash takings",
+    "expected_risk_band": "medium",
+    "why_benign": "A cash-intensive restaurant deposits its weekend takings each Monday: four deposits in a fortnight, each $7,400-$9,100. Every deposit sits in the $10,000 band and the aggregate exceeds it, so the detector is right to raise it; the defence is that the amounts track covers served and the pattern is years old. FFIEC's own cash-intensive-business guidance is why this is medium rather than low -- being cash-intensive is a risk factor, not an alibi.",
+    "spec": {"pattern": "structuring", "members": 4, "amount_range": ["7400.00", "9100.00"], "threshold": 10000, "recurring_monthly": true, "window_days": 14}
+  },
+  {
+    "id": "BL-008", "shape": "structuring", "scenario": "Car purchase paid in instalments below the threshold",
+    "expected_risk_band": "medium",
+    "why_benign": "A customer pays a dealer in three transfers of $9,500 across eleven days because the dealer's own limit is $10,000 per transfer. The sub-threshold amounts are the *dealer's* rule, not evasion -- but that is a claim requiring evidence, so it stays medium until someone checks it.",
+    "spec": {"pattern": "structuring", "members": 3, "amount": "9500.00", "threshold": 10000, "window_days": 11}
+  },
+  {
+    "id": "BL-009", "shape": "structuring", "scenario": "Payment-processor daily limit",
+    "expected_risk_band": "low",
+    "why_benign": "A merchant's acquirer settles at $9,900 maximum per batch by contract, so settlements cluster just under a threshold with mechanical regularity -- identical amounts, every business day, for two years.",
+    "spec": {"pattern": "structuring", "members": 10, "amount": "9900.00", "threshold": 10000, "identical_amounts": true, "recurring_monthly": true, "window_days": 14}
+  },
+  {
+    "id": "BL-010", "shape": "cycle", "scenario": "Recurring supplier chain with a genuine trade purpose",
+    "expected_risk_band": "low",
+    "why_benign": "A -> B -> C -> A where A sells raw material to B, B sells components to C, and C sells finished assemblies back to A. The ring is real and so is the trade; each leg carries a different amount reflecting added value, and the retained fraction is well under the 0.5 a laundering ring returns.",
+    "spec": {"pattern": "cycle", "hops": 3, "retained_fraction": 0.18, "recurring_monthly": true, "window_days": 21}
+  },
+  {
+    "id": "BL-011", "shape": "cycle", "scenario": "Intragroup treasury sweep",
+    "expected_risk_band": "low",
+    "why_benign": "Four subsidiaries of one group sweep balances to the parent and back on a monthly cycle. Same legal entity group, same four accounts, documented cash-pooling agreement.",
+    "spec": {"pattern": "cycle", "hops": 4, "retained_fraction": 0.99, "recurring_monthly": true, "window_days": 5}
+  },
+  {
+    "id": "BL-012", "shape": "cycle", "scenario": "Refund and re-purchase",
+    "expected_risk_band": "medium",
+    "why_benign": "A customer is refunded for a cancelled order and re-places it through a different group company, producing a three-hop round trip in eight days with ~97% of the value retained. Explainable, but the high retention is exactly what a laundering ring looks like, so it should not be cleared without the paperwork.",
+    "spec": {"pattern": "cycle", "hops": 3, "retained_fraction": 0.97, "recurring_monthly": false, "window_days": 8}
+  },
+  {
+    "id": "BL-013", "shape": "scatter_gather", "scenario": "Escrow disbursement and reassembly",
+    "expected_risk_band": "medium",
+    "why_benign": "A conveyancer splits a property completion across five parties (vendor, two lenders, tax, agent) and the surplus returns to the client account. One-to-many-to-one within a week, for a documented reason.",
+    "spec": {"pattern": "scatter_gather", "intermediaries": 5, "retained_fraction": 0.11, "window_days": 7}
+  },
+  {
+    "id": "BL-014", "shape": "scatter_gather", "scenario": "Tour operator paying and reconciling suppliers",
+    "expected_risk_band": "low",
+    "why_benign": "Pre-payments go out to four hotels and come back as unused-allocation refunds after the season. Many months apart, and the returning amounts are a small fraction of what went out.",
+    "spec": {"pattern": "scatter_gather", "intermediaries": 4, "retained_fraction": 0.07, "window_days": 20}
+  },
+  {
+    "id": "BL-015", "shape": "fan_in", "scenario": "Crowdfunded equipment purchase by a sports club",
+    "expected_risk_band": "low",
+    "why_benign": "41 club members contribute to a named equipment fund over three weeks. Senders are all existing members of the same club with a long history at the bank.",
+    "spec": {"pattern": "fan_in", "senders": 41, "amount_range": ["25.00", "300.00"], "window_days": 21}
+  },
+  {
+    "id": "BL-016", "shape": "fan_out", "scenario": "Class-action settlement administration",
+    "expected_risk_band": "medium",
+    "why_benign": "An administrator disburses to 60 claimants over two weeks from a court-ordered fund. Volume and beneficiary variety both trip the shell-company indicator; the court order is the answer and it is a document, not an inference.",
+    "spec": {"pattern": "fan_out", "recipients": 60, "amount_range": ["120.00", "8800.00"], "window_days": 14}
+  },
+  {
+    "id": "BL-017", "shape": "structuring", "scenario": "Two unrelated customers, coincidental timing",
+    "expected_risk_band": "low",
+    "why_benign": "Three sub-threshold deposits into one account within a fortnight that turn out to be a tax refund, a pension lump sum and a used-car sale. Sub-threshold by coincidence, not design, and the senders have nothing to do with each other.",
+    "spec": {"pattern": "structuring", "members": 3, "amount_range": ["8100.00", "9600.00"], "threshold": 10000, "unrelated_sources": true, "window_days": 13}
+  },
+  {
+    "id": "BL-018", "shape": "fan_in", "scenario": "Landlord deposit scheme release",
+    "expected_risk_band": "low",
+    "why_benign": "A deposit protection scheme releases 9 tenancy deposits to one landlord in a week at the end of an academic year. One institutional sender, nine references.",
+    "spec": {"pattern": "fan_in", "senders": 9, "amount_range": ["700.00", "1500.00"], "single_institutional_sender": true, "window_days": 7}
+  },
+  {
+    "id": "BL-019", "shape": "fan_out", "scenario": "Dividend distribution to shareholders",
+    "expected_risk_band": "low",
+    "why_benign": "A private company pays an annual dividend to 12 shareholders on one day, in amounts exactly proportional to a shareholding register the bank holds.",
+    "spec": {"pattern": "fan_out", "recipients": 12, "proportional_to_register": true, "recurring_monthly": false, "window_days": 1}
+  },
+  {
+    "id": "BL-020", "shape": "scatter_gather", "scenario": "Group VAT payment and reclaim",
+    "expected_risk_band": "low",
+    "why_benign": "A parent collects VAT from three subsidiaries, pays the revenue authority, and receives a reclaim which it redistributes. One-to-many-to-one with a government counterparty in the middle of it.",
+    "spec": {"pattern": "scatter_gather", "intermediaries": 3, "government_counterparty": true, "window_days": 30}
+  }
+]

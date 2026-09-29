@@ -56,7 +56,7 @@ def load_gold() -> list[dict]:
     return json.loads(GOLD_PATH.read_text())
 
 
-def evaluate(backend_name: str, tiers: set[int] | None) -> dict:
+def evaluate(backend_name: str, tiers: set[int] | None, *, rerank_arm: bool = False) -> dict:
     chunks = load_chunks(backend_name, tiers)
     questions = load_gold()
 
@@ -76,6 +76,10 @@ def evaluate(backend_name: str, tiers: set[int] | None) -> dict:
     hits = {k: 0 for k in CUTOFFS}
     recall = {k: 0.0 for k in CUTOFFS}
     reciprocal = 0.0
+    # §9.4's arm, measured on the same questions and the same retrieved sets. A reranker reorders
+    # and cannot add, so hit@15 is expected to be *identical* -- that equality is the check that
+    # the arm is wired correctly, not a disappointing result.
+    reranked = {k: 0 for k in CUTOFFS} if rerank_arm else None
 
     for start in range(0, len(queries), QUERY_BATCH):
         block = queries[start : start + QUERY_BATCH]
@@ -99,6 +103,21 @@ def evaluate(backend_name: str, tiers: set[int] | None) -> dict:
                     hits[k] += 1
                 recall[k] += len(found) / len(gold)
 
+            if reranked is not None:
+                from src.retrieval.rerank import rerank as rerank_hits
+
+                passages = [
+                    {"chunk_id": str(int(index)), "text": chunks[index]["text"]}
+                    for index in ordered
+                ]
+                order = [
+                    chunk_keys[int(hit["chunk_id"])]
+                    for hit in rerank_hits(questions[start + row]["Question"], passages)
+                ]
+                for k in CUTOFFS:
+                    if any(key in gold for key in order[:k]):
+                        reranked[k] += 1
+
     total = len(questions)
     return {
         "backend": backend_name,
@@ -107,6 +126,11 @@ def evaluate(backend_name: str, tiers: set[int] | None) -> dict:
         "questions": total,
         "tiers": sorted(tiers) if tiers else "all",
         "hit_at": {str(k): hits[k] / total for k in CUTOFFS},
+        **(
+            {"hit_at_reranked": {str(k): reranked[k] / total for k in CUTOFFS}}
+            if reranked is not None
+            else {}
+        ),
         "recall_at": {str(k): recall[k] / total for k in CUTOFFS},
         "mrr": reciprocal / total,
     }
@@ -118,6 +142,13 @@ def print_table(results: list[dict]) -> None:
     print("\n" + header)
     print("-" * len(header))
     for r in results:
+        if "hit_at_reranked" in r:
+            after = r["hit_at_reranked"]
+            print(
+                f"{r['backend'] + '+rerank':<10}{r['chunks']:>9,}"
+                f"{after['1']:>9.1%}{after['5']:>9.1%}{after['15']:>9.1%}"
+                f"{'':>9}{'':>9}{'':>9}"
+            )
         print(
             f"{r['backend']:<10}{r['chunks']:>9,}"
             f"{r['hit_at']['1']:>9.1%}{r['hit_at']['5']:>9.1%}{r['hit_at']['15']:>9.1%}"
@@ -131,6 +162,10 @@ def main() -> int:
     parser.add_argument(
         "--tier", type=int, nargs="*", default=None, help="restrict retrieval to these tiers"
     )
+    parser.add_argument(
+        "--rerank", action="store_true",
+        help="also score a FlashRank pass over the retrieved 15 (§9.4)",
+    )
     args = parser.parse_args()
 
     tiers = set(args.tier) if args.tier else None
@@ -140,7 +175,7 @@ def main() -> int:
     for name in names:
         print(f"\n{name}:")
         try:
-            results.append(evaluate(name, tiers))
+            results.append(evaluate(name, tiers, rerank_arm=args.rerank))
         except MissingCredentials as error:
             print(f"  SKIPPED -- {error}")
         except SystemExit as error:

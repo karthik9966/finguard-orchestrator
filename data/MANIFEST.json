@@ -1,13 +1,208 @@
 {
   "schema": 1,
   "artifacts": {
+    "raw/regulations/cfr/31cfr1010.311.xml": {
+      "url": "https://www.ecfr.gov/api/versioner/v1/full/2026-09-10/title-31.xml?part=1010&section=1010.311",
+      "sha256": "8b12ec2269f333f35cc65c921961fa13cccbe113dba92052b1792777202c6acf",
+      "bytes": 837,
+      "retrieved": "2026-09-27",
+      "licence": "US Government work (public domain)",
+      "note": "31 CFR 1010.311 -- the CTR filing obligation; the $10,000 monitored threshold.",
+      "extraction": "ecfr-xml",
+      "version": "eCFR 2026-09-10",
+      "effective_date": "2016-12-23",
+      "role": "obligation",
+      "source_id": "31cfr1010.311",
+      "tier": "regulation",
+      "authority": "binding",
+      "jurisdiction": "US"
+    },
+    "raw/regulations/cfr/31cfr1010.410.xml": {
+      "url": "https://www.ecfr.gov/api/versioner/v1/full/2026-09-10/title-31.xml?part=1010&section=1010.410",
+      "sha256": "7df8f3bc9a68312dfa083008aff203937f75e77beab7e208b2d3e3076ec73a14",
+      "bytes": 18270,
+      "retrieved": "2026-09-27",
+      "licence": "US Government work (public domain)",
+      "note": "31 CFR 1010.410 -- funds-transfer recordkeeping and the travel rule; the source of the $3,000 monitored threshold.",
+      "extraction": "ecfr-xml",
+      "version": "eCFR 2026-09-10",
+      "effective_date": "2026-01-02",
+      "role": "obligation",
+      "source_id": "31cfr1010.410",
+      "tier": "regulation",
+      "authority": "binding",
+      "jurisdiction": "US"
+    },
+    "raw/regulations/cfr/31cfr1020.210.xml": {
+      "url": "https://www.ecfr.gov/api/versioner/v1/full/2026-09-10/title-31.xml?part=1020&section=1020.210",
+      "sha256": "4b005b219cc0c5c40d0603ab009dce2db81552a9bdd2632a6e2670dd537a514b",
+      "bytes": 3761,
+      "retrieved": "2026-09-27",
+      "licence": "US Government work (public domain)",
+      "note": "31 CFR 1020.210 -- the duty to maintain an AML program at all.",
+      "extraction": "ecfr-xml",
+      "version": "eCFR 2026-09-10",
+      "effective_date": "2020-11-16",
+      "role": "obligation",
+      "source_id": "31cfr1020.210",
+      "tier": "regulation",
+      "authority": "binding",
+      "jurisdiction": "US"
+    },
+    "raw/regulations/cfr/31cfr1020.320.xml": {
+      "url": "https://www.ecfr.gov/api/versioner/v1/full/2026-09-10/title-31.xml?part=1020&section=1020.320",
+      "sha256": "eefe116c3efc20a0af79b18fec533e397c6828b2ca16ce6b171512ea21d8e5b5",
+      "bytes": 8646,
+      "retrieved": "2026-09-27",
+      "licence": "US Government work (public domain)",
+      "note": "31 CFR 1020.320 -- the SAR filing obligation. Every in-scope typology maps here, because reporting is the duty each of them triggers.",
+      "extraction": "ecfr-xml",
+      "version": "eCFR 2026-09-10",
+      "effective_date": "2016-12-23",
+      "role": "obligation",
+      "source_id": "31cfr1020.320",
+      "tier": "regulation",
+      "authority": "binding",
+      "jurisdiction": "US"
+    },
+    "raw/regulations/ffiec/ffiec-appendix-f.pdf": {
+      "url": "https://bsaaml.ffiec.gov/docs/manual/10_Appendices/07.pdf",
+      "sha256": "68061482d1d106aac5f2e80f40adf417c04bbaf8dce5c13c75ea2dfa7ae0149a",
+      "bytes": 166184,
+      "retrieved": "2026-09-27",
+      "licence": "FFIEC (US interagency guidance; public domain)",
+      "note": "FFIEC BSA/AML Examination Manual Appendix F -- the red-flag list. With FINRA Regulatory Notice 19-18 this is the Tier-2 indicator corpus.",
+      "manual_path": "10_Appendices/07.pdf",
+      "role": "indicator",
+      "source_id": "ffiec-appendix-f",
+      "tier": "guidance",
+      "authority": "illustrative",
+      "jurisdiction": "US"
+    },
+    "raw/regulations/ffiec/ffiec-manual-ctr.pdf": {
+      "url": "https://bsaaml.ffiec.gov/docs/manual/06_AssessingComplianceWithBSARegulatoryRequirements/05.pdf",
+      "sha256": "eae60cf32e493974e9966946368510f290b92d7735bdbfca24f57d7ebb8cd4e2",
+      "bytes": 193520,
+      "retrieved": "2026-09-27",
+      "licence": "FFIEC (US interagency guidance; public domain)",
+      "note": "Examiner guidance on the CTR obligation of 31 CFR 1010.311.",
+      "manual_path": "06_AssessingComplianceWithBSARegulatoryRequirements/05.pdf",
+      "role": "indicator",
+      "source_id": "ffiec-manual-ctr",
+      "tier": "guidance",
+      "authority": "illustrative",
+      "jurisdiction": "US"
+    },
+    "raw/regulations/ffiec/ffiec-manual-funds-transfer-recordkeeping.pdf": {
+      "url": "https://bsaaml.ffiec.gov/docs/manual/06_AssessingComplianceWithBSARegulatoryRequirements/09.pdf",
+      "sha256": "f7691c7584178feb0a6583728e9a3718941518e95becbb63acea603f0733c559",
+      "bytes": 147329,
+      "retrieved": "2026-09-27",
+      "licence": "FFIEC (US interagency guidance; public domain)",
+      "note": "Examiner guidance on 31 CFR 1010.410's funds-transfer recordkeeping and travel rule.",
+      "manual_path": "06_AssessingComplianceWithBSARegulatoryRequirements/09.pdf",
+      "role": "indicator",
+      "source_id": "ffiec-manual-funds-transfer-recordkeeping",
+      "tier": "guidance",
+      "authority": "illustrative",
+      "jurisdiction": "US"
+    },
+    "raw/regulations/ffiec/ffiec-manual-monetary-instruments.pdf": {
+      "url": "https://bsaaml.ffiec.gov/docs/manual/06_AssessingComplianceWithBSARegulatoryRequirements/08.pdf",
+      "sha256": "ae74307e6833bc91d2faa05fea71995de2a2ee8b76414f65cebc8f99c32dd9ec",
+      "bytes": 181783,
+      "retrieved": "2026-09-27",
+      "licence": "FFIEC (US interagency guidance; public domain)",
+      "note": "The $3,000 monetary-instrument recordkeeping threshold in examiner language.",
+      "manual_path": "06_AssessingComplianceWithBSARegulatoryRequirements/08.pdf",
+      "role": "indicator",
+      "source_id": "ffiec-manual-monetary-instruments",
+      "tier": "guidance",
+      "authority": "illustrative",
+      "jurisdiction": "US"
+    },
+    "raw/regulations/ffiec/ffiec-manual-sar.pdf": {
+      "url": "https://bsaaml.ffiec.gov/docs/manual/06_AssessingComplianceWithBSARegulatoryRequirements/04.pdf",
+      "sha256": "bd42e2637c61ba044f1ede8b8756858aaf23d425c9cf76c3c2bb5530a3eee67e",
+      "bytes": 485588,
+      "retrieved": "2026-09-27",
+      "licence": "FFIEC (US interagency guidance; public domain)",
+      "note": "Examiner guidance on the SAR obligation of 31 CFR 1020.320.",
+      "manual_path": "06_AssessingComplianceWithBSARegulatoryRequirements/04.pdf",
+      "role": "indicator",
+      "source_id": "ffiec-manual-sar",
+      "tier": "guidance",
+      "authority": "illustrative",
+      "jurisdiction": "US"
+    },
+    "raw/regulations/ffiec/ffiec-risk-ach.pdf": {
+      "url": "https://bsaaml.ffiec.gov/docs/manual/09_RisksAssociatedWithMoneyLaunderingAndTerroristFinancing/08.pdf",
+      "sha256": "a13c9213e2e06c07bb9efe5b8231e04915def73044e43c60deb44e40757ea1d2",
+      "bytes": 169157,
+      "retrieved": "2026-09-27",
+      "licence": "FFIEC (US interagency guidance; public domain)",
+      "note": "Product-risk discussion for ACH, one of SAML-D's payment types.",
+      "manual_path": "09_RisksAssociatedWithMoneyLaunderingAndTerroristFinancing/08.pdf",
+      "role": "indicator",
+      "source_id": "ffiec-risk-ach",
+      "tier": "guidance",
+      "authority": "illustrative",
+      "jurisdiction": "US"
+    },
+    "raw/regulations/ffiec/ffiec-risk-cash-intensive.pdf": {
+      "url": "https://bsaaml.ffiec.gov/docs/manual/09_RisksAssociatedWithMoneyLaunderingAndTerroristFinancing/26.pdf",
+      "sha256": "17a8058718eed0dec281bdb8e1977688ce1123aa4b3feecd87827cdfb7dbc10b",
+      "bytes": 127226,
+      "retrieved": "2026-09-27",
+      "licence": "FFIEC (US interagency guidance; public domain)",
+      "note": "Product-risk discussion behind sub-threshold cash structuring.",
+      "manual_path": "09_RisksAssociatedWithMoneyLaunderingAndTerroristFinancing/26.pdf",
+      "role": "indicator",
+      "source_id": "ffiec-risk-cash-intensive",
+      "tier": "guidance",
+      "authority": "illustrative",
+      "jurisdiction": "US"
+    },
+    "raw/regulations/ffiec/ffiec-risk-concentration-accounts.pdf": {
+      "url": "https://bsaaml.ffiec.gov/docs/manual/09_RisksAssociatedWithMoneyLaunderingAndTerroristFinancing/15.pdf",
+      "sha256": "576b4ef46d95033ed1055bbd81eb7c2a20294e64f0a92e63ed4445a0dc2f3c6c",
+      "bytes": 125646,
+      "retrieved": "2026-09-27",
+      "licence": "FFIEC (US interagency guidance; public domain)",
+      "note": "The collector-account shape in examiner language -- the closest published description of what the fan-in detector finds.",
+      "manual_path": "09_RisksAssociatedWithMoneyLaunderingAndTerroristFinancing/15.pdf",
+      "role": "indicator",
+      "source_id": "ffiec-risk-concentration-accounts",
+      "tier": "guidance",
+      "authority": "illustrative",
+      "jurisdiction": "US"
+    },
+    "raw/regulations/ffiec/ffiec-risk-funds-transfers.pdf": {
+      "url": "https://bsaaml.ffiec.gov/docs/manual/09_RisksAssociatedWithMoneyLaunderingAndTerroristFinancing/07.pdf",
+      "sha256": "705363894fc82dd86c01c80cfc7d086e1d29af67937e041900620fb6f64033f2",
+      "bytes": 162777,
+      "retrieved": "2026-09-27",
+      "licence": "FFIEC (US interagency guidance; public domain)",
+      "note": "Product-risk discussion for wire transfers, the instrument most of the batch is.",
+      "manual_path": "09_RisksAssociatedWithMoneyLaunderingAndTerroristFinancing/07.pdf",
+      "role": "indicator",
+      "source_id": "ffiec-risk-funds-transfers",
+      "tier": "guidance",
+      "authority": "illustrative",
+      "jurisdiction": "US"
+    },
     "raw/regulations/fincen/fin-2022-alert002-russian-elites.pdf": {
       "url": "https://www.fincen.gov/system/files/2022-03/FinCEN%20Alert%20Russian%20Elites%20High%20Value%20Assets_508%20FINAL.pdf",
       "sha256": "d090405be6a48c770f316cae782a4300eb56510cbcb5fe5861312ff918857c2a",
       "bytes": 513312,
       "retrieved": "2026-08-14",
       "licence": "US Government work (public domain)",
-      "note": "FIN-2022-Alert002 -- red flags for high-value assets held through shell companies and trusts"
+      "note": "FIN-2022-Alert002 -- red flags for high-value assets held through shell companies and trusts",
+      "role": "indicator",
+      "source_id": "fincen-2022-alert002",
+      "tier": "guidance",
+      "authority": "illustrative",
+      "jurisdiction": "US"
     },
     "raw/regulations/fincen/fin-2022-alert003-fincen-bis-joint.pdf": {
       "url": "https://www.fincen.gov/system/files/2022-06/FinCEN%20and%20Bis%20Joint%20Alert%20FINAL.pdf",
@@ -15,7 +210,12 @@
       "bytes": 928327,
       "retrieved": "2026-08-14",
       "licence": "US Government work (public domain)",
-      "note": "FIN-2022-Alert003 -- export control evasion; transshipment and illicit corridors"
+      "note": "FIN-2022-Alert003 -- export control evasion; transshipment and illicit corridors",
+      "role": "indicator",
+      "source_id": "fincen-2022-alert003",
+      "tier": "guidance",
+      "authority": "illustrative",
+      "jurisdiction": "US"
     },
     "raw/regulations/fincen/fin-2023-alert002-commercial-real-estate.pdf": {
       "url": "https://www.fincen.gov/system/files/shared/FinCEN%20Alert%20Real%20Estate%20FINAL%20508_1-25-23%20FINAL%20FINAL.pdf",
@@ -23,7 +223,12 @@
       "bytes": 479142,
       "retrieved": "2026-08-14",
       "licence": "US Government work (public domain)",
-      "note": "FIN-2023-Alert002 -- sanctions evasion via commercial real estate; shell company red flags"
+      "note": "FIN-2023-Alert002 -- sanctions evasion via commercial real estate; shell company red flags",
+      "role": "indicator",
+      "source_id": "fincen-2023-alert002",
+      "tier": "guidance",
+      "authority": "illustrative",
+      "jurisdiction": "US"
     },
     "raw/regulations/finra/finra-rule-3110.txt": {
       "url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules/3110",
@@ -32,7 +237,13 @@
       "retrieved": "2026-08-14",
       "licence": "FINRA rulebook (HTML source; no official PDF published)",
       "note": "FINRA Rule 3110. Supervision",
-      "extraction": "html-scrape"
+      "extraction": "html-scrape",
+      "role": "indicator",
+      "source_id": "finra-3110",
+      "tier": "regulation",
+      "authority": "binding",
+      "applies_to": "broker_dealer",
+      "jurisdiction": "US"
     },
     "raw/regulations/finra/finra-rule-3310.txt": {
       "url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules/3310",
@@ -41,7 +252,13 @@
       "retrieved": "2026-08-14",
       "licence": "FINRA rulebook (HTML source; no official PDF published)",
       "note": "FINRA Rule 3310. Anti-Money Laundering Compliance Program",
-      "extraction": "html-scrape"
+      "extraction": "html-scrape",
+      "role": "indicator",
+      "source_id": "finra-3310",
+      "tier": "regulation",
+      "authority": "binding",
+      "applies_to": "broker_dealer",
+      "jurisdiction": "US"
     },
     "raw/regulations/finra/regulatory-notice-19-18.pdf": {
       "url": "https://www.finra.org/sites/default/files/2019-05/Regulatory-Notice-19-18.pdf",
@@ -49,7 +266,12 @@
       "bytes": 141647,
       "retrieved": "2026-08-14",
       "licence": "FINRA public guidance",
-      "note": "Regulatory Notice 19-18 -- 104 money laundering red flags for broker-dealers"
+      "note": "Regulatory Notice 19-18 -- 104 money laundering red flags for broker-dealers",
+      "role": "indicator",
+      "source_id": "finra-rn-19-18",
+      "tier": "guidance",
+      "authority": "illustrative",
+      "jurisdiction": "US"
     },
     "raw/regulations/obliqa/ObliQA_test.json": {
       "url": "https://raw.githubusercontent.com/RegNLP/ObliQADataset/main/ObliQA_test.json",
@@ -60,7 +282,10 @@
       "note": "Retrieval gold set: 2,786 questions labelled with 3,666 relevant passages. Ground truth for \u00a73.3 chunking quality.",
       "questions": 2786,
       "gold_pairs": 3666,
-      "unresolved_pairs": 0
+      "unresolved_pairs": 0,
+      "role": "benchmark",
+      "source_id": "obliqa-qa",
+      "jurisdiction": "ADGM"
     },
     "raw/regulations/obliqa/StructuredRegulatoryDocuments.zip": {
       "url": "https://raw.githubusercontent.com/RegNLP/ObliQADataset/main/StructuredRegulatoryDocuments.zip",
@@ -69,7 +294,25 @@
       "retrieved": "2026-08-14",
       "licence": "RegNLP / ObliQA (see upstream repository)",
       "note": "ADGM regulatory corpus: 40 documents, 13,732 passages, ~876k words. DocumentID 1 is the ADGM AML Rulebook.",
-      "extracted_documents": 40
+      "extracted_documents": 40,
+      "role": "benchmark",
+      "source_id": "obliqa",
+      "jurisdiction": "ADGM"
+    },
+    "raw/regulations/usc/31usc5324.txt": {
+      "url": "https://www.govinfo.gov/content/pkg/USCODE-2024-title31/html/USCODE-2024-title31-subtitleIV-chap53-subchapII-sec5324.htm",
+      "sha256": "d613d722e82e3ea1606a9b12dd42711c4f3300a6e9af55f9f63835933b50784f",
+      "bytes": 9007,
+      "retrieved": "2026-09-27",
+      "licence": "US Government work (public domain)",
+      "note": "31 USC 5324 -- the structuring prohibition itself. The binding obligation behind the structuring and smurfing typologies.",
+      "extraction": "html-scrape",
+      "role": "obligation",
+      "source_id": "31usc5324",
+      "tier": "statute",
+      "authority": "binding",
+      "jurisdiction": "US",
+      "version": "USCODE-2024"
     },
     "raw/saml_d/SAML-D.csv": {
       "url": "https://www.kaggle.com/datasets/berkanoztas/synthetic-transaction-monitoring-dataset-aml",
@@ -79,7 +322,9 @@
       "licence": "CC BY-NC-SA 4.0 (non-commercial; attribution required)",
       "note": "SAML-D: 9,504,852 transactions, 12 features, 28 typologies (11 normal / 17 suspicious)",
       "kaggle_slug": "berkanoztas/synthetic-transaction-monitoring-dataset-aml",
-      "kagglehub_cache": "/Users/karthik/.cache/kagglehub/datasets/berkanoztas/synthetic-transaction-monitoring-dataset-aml/versions/2/SAML-D.csv"
+      "kagglehub_cache": "/Users/karthik/.cache/kagglehub/datasets/berkanoztas/synthetic-transaction-monitoring-dataset-aml/versions/2/SAML-D.csv",
+      "role": "transactions",
+      "source_id": "saml-d"
     }
   },
   "citations": {

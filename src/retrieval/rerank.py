@@ -30,10 +30,13 @@ import logging
 from functools import lru_cache
 from typing import Any
 
+from src.config import get_settings
+
 # ms-marco-TinyBERT-L-2-v2, FlashRank's default: 3 MB, CPU-only, ~40 ms for 15 passages. Small
 # enough that reranking is free next to a single gpt-4o call, which is the whole argument for
 # doing this work locally rather than asking a model to choose.
-RERANK_MODEL = "ms-marco-TinyBERT-L-2-v2"
+# Name now lives in the environment as CROSS_ENCODER_MODEL (LLD §8).
+RERANK_MODEL = get_settings().cross_encoder_model
 
 
 @lru_cache(maxsize=1)

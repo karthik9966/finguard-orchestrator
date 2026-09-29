@@ -144,7 +144,7 @@ def test_collection_records_the_backend_that_built_it(isolated):
 
 
 def test_a_citation_resolves_to_the_clause_it_was_grounded_in(isolated):
-    """§6.4 exists to make every flag traceable. `generate_node` derives
+    """§6.4 exists to make every flag traceable. Report generation derives
     source_document_hashes from the retrieved set in Python, so the drawer must fetch *those*
     chunks -- re-searching could surface a different clause than the report actually used."""
     store.build("minilm")

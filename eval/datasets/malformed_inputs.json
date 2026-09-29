@@ -1,0 +1,92 @@
+[
+  {
+    "id": "MI-001",
+    "file": "eval/datasets/malformed/missing_32a.txt",
+    "expect": {
+      "parsed": 1,
+      "quarantined_or_rescued": 1,
+      "reaches_detectors": 1
+    },
+    "why": "The amount is the one field nothing downstream can do without. The strict parser refuses the message, the light-model fallback gets one attempt, and whatever it cannot read is quarantined -- never passed on as a zero."
+  },
+  {
+    "id": "MI-002",
+    "file": "eval/datasets/malformed/amount_wrong_separator.txt",
+    "expect": {
+      "amount_must_not_be": "581046.00"
+    },
+    "why": "MT103 writes 5810,46 with a comma. A parser that strips the separator instead of reading it reports 581,046.00 -- a hundredfold error inside a filing. This is the regression fixture for that specific bug."
+  },
+  {
+    "id": "MI-003",
+    "file": "eval/datasets/malformed/missing_reference.txt",
+    "expect": {
+      "parsed": 0,
+      "quarantined": 1,
+      "quarantine_has_ordinal": true
+    },
+    "why": "With no :20: there is no key, so the quarantine record has to be findable by its position in the batch instead. A message that cannot be named is still a message that was lost."
+  },
+  {
+    "id": "MI-004",
+    "file": "eval/datasets/malformed/non_utf8_latin1.txt",
+    "expect": {
+      "no_unhandled_exception": true
+    },
+    "why": "Latin-1 bytes are not valid UTF-8. Reading the file must fail as a clean batch-level error or decode with replacement -- never a UnicodeDecodeError escaping to the caller."
+  },
+  {
+    "id": "MI-005",
+    "file": "eval/datasets/malformed/truncated.txt",
+    "expect": {
+      "parsed": 1,
+      "no_unhandled_exception": true
+    },
+    "why": "A transfer cut short by a failed copy. The messages before the cut are real and must survive; the fragment must not be completed by guesswork."
+  },
+  {
+    "id": "MI-006",
+    "file": "eval/datasets/malformed/impossible_date.txt",
+    "expect": {
+      "parsed": 0,
+      "quarantined_or_rescued": 1
+    },
+    "why": "31 June. A date parser that rolls over to 1 July silently moves the transaction into another month's batch -- and every detector is a time window."
+  },
+  {
+    "id": "MI-007",
+    "file": "eval/datasets/malformed/negative_amount.txt",
+    "expect": {
+      "parsed": 0,
+      "quarantined_or_rescued": 1
+    },
+    "why": "A credit transfer cannot be negative. Accepting it would let a detector compute an aggregate that offsets real transfers against a sign error."
+  },
+  {
+    "id": "MI-008",
+    "file": "eval/datasets/malformed/not_a_batch.txt",
+    "expect": {
+      "parsed": 0,
+      "batch_unreadable": true
+    },
+    "why": "LLD \u00a76's one loud failure. A file with nothing in it must be a client error before a run id is minted, not a clean report for an empty month."
+  },
+  {
+    "id": "MI-009",
+    "file": "eval/datasets/malformed/empty.txt",
+    "expect": {
+      "parsed": 0,
+      "batch_unreadable": true
+    },
+    "why": "The degenerate case of the same rule, and the one a retry loop is most likely to send."
+  },
+  {
+    "id": "MI-010",
+    "file": "eval/datasets/malformed/duplicate_reference.txt",
+    "expect": {
+      "parsed": 2,
+      "distinct_refs": 1
+    },
+    "why": "Two messages, one reference. Both are read -- neither is corrupt -- but a report's flagged_transactions is a set of references, so a detector must not be able to count one transaction twice by seeing the same ref in two places."
+  }
+]

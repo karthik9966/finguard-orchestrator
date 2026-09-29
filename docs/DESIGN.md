@@ -1,140 +1,126 @@
-# DESIGN.md — orientation for anyone (or any agent) picking this up
+# FinGuard Orchestrator — as built
 
-**FinGuard Orchestrator** turns a batch of SWIFT MT103 payment messages into a
-`ComplianceReport` — an AML suspicious-activity finding grounded in real regulatory text.
+The companion to the design set. `AML- PRD.docx`, `FinGuard_HLD.docx`, `FinGuard_LLD.docx` and
+`FinGuard_Eval_Design.docx` say what the system should be; these markdown files say what it is, and
+name every place the two differ.
 
-Read this before changing anything. It is the short version of *why the code looks like it does*,
-and most of it is counter-intuitive enough that a reasonable person would "fix" it back.
+| document | as-built companion |
+|---|---|
+| `AML- PRD.docx` · `FinGuard_HLD.docx` | [HLD.md](HLD.md) |
+| `FinGuard_LLD.docx` | [LLD.md](LLD.md) · [CONSTANTS.md](CONSTANTS.md) |
+| `FinGuard_Eval_Design.docx` | [TEST_DESIGN.md](TEST_DESIGN.md) · [TEST_RESULTS.md](TEST_RESULTS.md) |
+| — | [CHANGELOG.md](CHANGELOG.md) |
 
 ---
 
-## The one organising principle
+## What the system does
 
-> **Anything with a right answer is code. Only judgement is bought.**
-
-Parsing an amount has a right answer. Counting wires into an account has a right answer. Deciding
-whether a clause *bears on* a pattern is judgement. So a 220-wire batch costs **three model calls,
-not 220** — and the expensive model never sees a raw wire.
-
-Seven nodes, four of them free:
+It audits a month of transactions against US AML regulation and produces a report an examiner could
+check. One batch in, one `ComplianceReport` out, with every finding carrying the clause it rests on.
 
 ```
-parse → detect → [route] → audit → draft → critic → generate
- free    free      free      free     $       $         $
-                    │                          │
-                    └→ no_findings ($0.00)     └→ back to audit (max 2)
+batch (MT103 pdf/txt)
+  │
+  ├─ ingest ─────────── deterministic parse → TransactionRecord; one light-model rescue per
+  │                     refused message; anything still unreadable is quarantined, never guessed
+  │
+  ├─ detect ─────────── five windowed typology detectors, reconciled by precedence.  no model
+  │                        structuring · fan_in · fan_out · cycle · scatter_gather
+  │                     no candidates → clean report, $0.0000, the model is never constructed
+  │
+  └─ for each candidate:
+        retrieve ────── Tier 1 obligations **by curated id** (never searched)
+        │              Tier 2 indicators by `authority: illustrative` search + cross-encoder rerank
+        ground ──────── reasoning model → DraftFinding, against redacted context
+        critique ────── deterministic faithfulness gate FIRST, then the model judge
+        │                 pass → Finding(pending_review)
+        │                 thin → refinement hint → back to retrieve  (bounded)
+        │                 exhausted → Finding(needs_review), with reasons
+        ▼
+     report ─────────── templated assembly. no model call.
+        │
+     store ──────────── immutable report_json + mutable findings.status + append-only reviews
 ```
 
-The backward edge `critic → audit` is the only reason this is a graph rather than a `for` loop.
-It returns to **retrieval**, not to drafting, because a thin finding is usually missing law rather
-than bad writing.
+The two halves that matter are on opposite sides of the model. **Detection is arithmetic** — it finds
+shapes and names none of them suspicious. **Grounding is judgement** — it is shown the shape and the
+law, and it may only conclude what the law it was shown supports. The faithfulness gate is what makes
+the second half checkable: a finding may cite only clauses that were actually retrieved, enforced by
+a subset test in Python before any model is asked its opinion.
 
----
+## What it is not
 
-## Nine decisions that look wrong and are not
+Out of scope, per HLD §1.1 and enforced rather than merely stated:
 
-Each of these was measured. Changing one without re-measuring will quietly degrade the system.
+- **No real-time feeds.** The unit of work is a monthly batch.
+- **No cross-month memory.** Each batch is audited alone, which is also what bounds every detector's
+  window by construction rather than by a check.
+- **No non-US law.** `RuleChunk` rejects a non-US jurisdiction *on the model*, so an ADGM clause
+  cannot reach a citation even if a metadata filter is later written wrongly. ObliQA's 12,122 ADGM
+  chunks live in a separate collection, used only to keep the retrieval benchmark reproducible.
+- **No automated filing.** The system produces a report and a human decides.
+- **No multi-tenancy.** One deployment audits one institution.
 
-**1 · Retrieval queries are ten hardcoded templates, not model-generated.**
-Rank of the correct clause out of 12,273, same facts:
+## The four documented deviations from the design set
 
-| | rank |
-|---|---|
-| raw detector JSON | 11,268 |
-| a narrative of events | 315 |
-| **an obligation-shaped template** | **5** |
+Recorded here because a deviation nobody wrote down becomes a defect somebody finds.
 
-Rulebooks are written as duties (*"a Relevant Person **must**…"*), so a description of events
-shares no register with them. Even a good human paraphrase loses: the natural rewording of the
-concentration query scores 0.610 cosine and retrieves COBS noise, where the shipped wording scores
-0.343 and lands the target clause in the top 8. `src/graph/prompts.py`
+### 1. Five detectors, not four
 
-**2 · Detectors emit geometry, never a typology name.**
-A candidate says `[dispersion]`, never `"structuring"`. Python may observe *"19 wires, CV 1.162"*;
-only a retrieved clause may conclude an offence. Otherwise the system invents a label, retrieves
-the clause matching its own invention, and cites it as independent authority. `src/utils/detectors.py`
+The PRD names five in-scope typologies — `structuring`, `fan_in`, `fan_out`, `cycle`,
+`scatter_gather` — where earlier drafts described four geometric primitives
+(concentration/dispersion/path/magnitude). The five are what shipped, and the difference is not
+cosmetic: `pattern_to_obligations` is keyed on typology, so a candidate must carry a named typology
+to be grounded at all. The old primitives emitted geometry and left naming to retrieval, which is
+why three of the five in-scope detectors had nothing to find when the ledgers were first regenerated.
 
-**3 · Four shape primitives, not 17 typology rules.**
-All 17 SAML-D suspicious typologies collapse onto concentration / dispersion / path / magnitude.
+### 2. Fifteen scenarios per pattern, not ten
 
-**4 · 100% recall at 32% precision is the intended trade.**
-A missed launderer is a regulatory failure; a false alarm costs an analyst ~5 minutes. Detector
-precision work is deliberately deferred.
+Eval Design §3 sizes `Labeled_Patterns` at "~40 (≈10 / pattern)". The golden set holds **75, fifteen
+per pattern**, for one reason: with a denominator of 15 a single miss is 6.7% rather than 10%, and
+recall is being compared against a 0.90 gate. Eval Design anticipates this — *"they can be scaled up
+for a more convincing recall number without changing the design"* — and getting to fifteen per
+pattern required three changes to the ledger generator, described in [TEST_DESIGN.md](TEST_DESIGN.md).
 
-**5 · Retrieved lists are merged by reciprocal rank fusion, not by distance.**
-Distances are measured against each query's own vector and are **not comparable across queries** —
-on June the seven queries' best hits span 0.3433 to 0.4827, so a distance sort ranks *how easy the
-question was* above *how good the answer is*. RRF moved the clause June cites from rank 20 to 10.
-Round-robin (23) and min-max normalisation (42) are both worse than the bug they replace.
+### 3. Journey 2 returns 202 + poll, with `?wait=true` as the synchronous variant
 
-**6 · The context holds 24 clauses, not the blueprint's 4.**
-At 93 clauses the model cited *nothing* and the critic scored the draft 0.00 — retrieval was fine,
-the noise underneath was the problem. But 4 is unsafe: tracking every clause the live reports
-actually cited, the worst reached rank 17 even after reranking. 24 is the measured middle.
+HLD §2.2's Journey 2 says the report is *"returned directly in the API response"*. LLD §5.1 step 1
+says `POST /audits` → 202 + `job_id`. **The LLD wins**, because an audit runs per candidate and a
+held connection is a timeout waiting for a proxy to find it. `?wait=true` gives Journey 2 its one
+round trip — the same queue and the same worker, held open for one caller, with a bounded timeout
+that degrades to the `job_id` rather than hanging. The status code follows the answer: 200 with a
+report, 202 with an id.
 
-**7 · The citation veto is Python, and it is a veto, not a penalty.**
-Every clause a draft cites is checked against what was retrieved. Absent ⇒ `score = 0.0`.
-This is arithmetic, so it runs on every commit rather than being admired once — **and it has
-fired in production**: the 2026-09-08 May run fabricated two citations, was vetoed, and shipped
-with them recorded as reservations instead of as law. `nodes.critic_node`
+### 4. `uv` and a lockfile, not `requirements.txt`
 
-**8 · Three report fields are recomputed in Python after the model returns them.**
-`flagged_wires` (the model returned *account numbers* where wire references belong),
-`source_document_hashes` (returned empty beside a live citation), and `risk_rating` (capped below
-`HIGH_RISK_CONFIDENCE`). The model formats prose; it is not trusted with bookkeeping it can get
-wrong silently. `nodes.generate_node`
+LLD §8 asks for pinned dependencies. The image installs from `uv.lock` with `uv sync --frozen`, which
+pins the whole resolved graph *with hashes* rather than a flat list — a stricter answer to the same
+requirement. A `requirements.txt` is deliberately **not** checked in, because a file that looks
+authoritative while the image installs something else is worse than no file; it is generated on
+demand for a scanner that wants one:
 
-**9 · Reports are never cached; retrieved clauses are.**
-A report narrative names real accounts and amounts — June's carries 3 accounts and 11 figures — so
-reusing one across batches would put the wrong identifiers into a regulatory filing. Clauses carry
-no such risk. Hence semantic matching for clauses, exact-only for findings. `src/utils/cache.py`
+```bash
+uv export --no-dev --format requirements-txt --no-emit-project > requirements.txt   # 3,174 hashes
+```
 
----
+There is a fifth, smaller one, recorded in [CONSTANTS.md](CONSTANTS.md): `structuring.band_fraction`
+is a fraction where LLD §8 names an absolute `band`, because one absolute value cannot serve both the
+$10,000 and the $3,000 threshold sensibly.
 
-## Known defects — do not treat these as done
+And one addition rather than a deviation: the results store has a fourth table, `jobs`, which LLD
+§3.2 does not list. §3.2 specifies the *results* tables and §5.1 step 1 says only "enqueue background
+graph run" — but step 9 then has the client come back for `GET /audits/{job_id}`, and a queue that
+lives in a process dict cannot answer that after a restart.
 
-**The risk rating does not reliably separate a clean batch from a dirty one.** Deferred by
-decision, asserted as a failing test rather than described in prose
-(`tests/eval_suite.py::test_a_clean_batch_is_not_reported_as_a_finding`).
+## Reading order
 
-On 2026-09-08 May *did* come back Low — but only because the citation veto forced confidence to
-0.00. The correct answer arrived by way of a failure, not by calibration. Do not read that run as
-the defect being fixed.
+Start here, then:
 
-**Contextual Precision is the weak metric** — 0.547 on June. Retrieval ordering, confirmed
-independently by the reranker experiment.
+- [HLD.md](HLD.md) — the zones, the three journeys, what runs in-environment and what leaves it.
+- [LLD.md](LLD.md) — the node-by-node build, the error taxonomy, the schemas.
+- [CONSTANTS.md](CONSTANTS.md) — every tunable number beside the measurement that chose it.
+- [TEST_DESIGN.md](TEST_DESIGN.md) — the three tiers, the six golden corpora, the two CI gates.
+- [TEST_RESULTS.md](TEST_RESULTS.md) — what it actually scores, including what fails.
+- [CHANGELOG.md](CHANGELOG.md) — what changed and why, with the reversals kept.
 
-**`escalate()` has never run against a live model.** No generated batch contains a malformed
-message; it is exercised only by stub.
-
----
-
-## Where things live
-
-| | |
-|---|---|
-| `src/utils/swift_parser.py` | MT103 → typed `Wire`. 880/880, exact |
-| `src/utils/detectors.py` | four shape primitives → `Candidate` |
-| `src/graph/{state,prompts,nodes,graph}.py` | the LangGraph agent |
-| `src/graph/{cost,rerank,evalset}.py` | token accounting, cross-encoder, eval capture |
-| `src/ingestion/` | corpus → 12,273 chunks in ChromaDB |
-| `src/ui/cockpit.py` · `src/api/main.py` | the two front doors |
-| `src/utils/cache.py` | §9.3 retrieval cache |
-
-Deeper detail: [HLD.md](HLD.md) for structure, [LLD.md](LLD.md) for contracts and constants,
-[TEST_DESIGN.md](TEST_DESIGN.md) for what is verified and how,
-[TEST_RESULTS.md](TEST_RESULTS.md) for the latest measured numbers,
-[CHANGELOG.md](CHANGELOG.md) for how it got here.
-
----
-
-## House rules for changing this code
-
-1. **Measure before you tune.** Every constant here came from a number. `MAX_CONTEXT_CLAUSES`,
-   `RRF_K`, `MIN_CLUSTER_WIRES`, `HIGH_RISK_CONFIDENCE` all have their evidence in a comment.
-2. **The free path must stay free.** `parse`, `detect`, `route_after_detect` and `audit` make no
-   model calls. A batch with no candidates must cost exactly $0.00.
-3. **`uv run pytest tests/` must need no API key and no network.** 233 tests, ~40s. Anything that
-   breaks that has broken the suite's purpose, not just a test.
-4. **Never widen what the model is trusted with.** If a field can be derived, derive it.
-5. **New guards get a test that would fail without them**, not a comment saying they matter.
+The repository's `README.md` is the operational front door: how to run it, what each command does.

@@ -1,26 +1,167 @@
-# The service and its cache together. Redis is optional by design -- `docker compose up api`
-# alone runs uncached and correct -- but running both is the intended shape.
-services:
-  redis:
-    image: redis:7-alpine
-    ports: ["6379:6379"]
-    # 64 MB caps a store that holds ~0.43 MB warm; allkeys-lru means a runaway evicts rather
-    # than refusing writes, since every entry here is disposable by construction.
-    command: redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
+# Single-box deployment -- LLD §8, HLD §6.
+#
+# Redis is not here as a cache. The pre-migration system cached retrieved clauses in it, which
+# measurably worked (44.0s -> 0.0s on a warm audit node), but the new HLD §3 drops caching for v1: a
+# monthly batch has no high-frequency duplicate-query volume for a cache to exploit, and
+# per-candidate retrieval makes each query more specific than the batch-level ones that used to
+# repeat. The `cache` service below belongs to Langfuse, not to us. Revisit only if profiling shows
+# repeated work.
+#
+# **Langfuse is more than "langfuse + its Postgres".** The migration plan was written against
+# Langfuse v2, which needed only Postgres. v3 split storage three ways -- Postgres for
+# configuration, ClickHouse for the traces themselves, S3/MinIO for large payloads, Redis for the
+# queue between the web tier and the worker -- and the SDK this project uses (4.x) speaks the
+# OpenTelemetry endpoint only v3+ serves. So the stack is six services rather than two. Recorded as
+# a deviation from the plan with its reason, rather than pinning an older server the client cannot
+# talk to.
+#
+#   docker compose up -d                  # everything
+#   docker compose up -d api ui           # just the audit engine, tracing off
+#
+# The observability stack is optional at runtime: with no LANGFUSE_* keys set, the engine traces
+# nothing and every audit behaves identically. An audit must not fail because Langfuse is down.
 
+services:
+  # --- the audit engine -------------------------------------------------------------------
   api:
     build: .
     ports: ["8000:8000"]
     environment:
-      REDIS_HOST: redis
-      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in your environment or .env}
+      LLM_API_KEY: ${LLM_API_KEY:?set LLM_API_KEY in your environment or .env}
+      # Required, not optional: without it the service refuses every endpoint but /health with a
+      # 503. That is the intended default -- this container audits financial records, and a
+      # forgotten token must not be the same thing as an open API. `openssl rand -hex 32`.
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:?set API_AUTH_TOKEN in your environment or .env}
+      # On the named volume below, so reports outlive `docker compose up --force-recreate`. The
+      # default (./results.db, inside the image) would be a fresh empty database every time, which
+      # defeats the point of persisting them.
+      RESULTS_DB_URL: sqlite:////data/results.db
+      # Tracing, all optional. Unset means tracing is off, not broken.
+      LANGFUSE_TRACING: ${LANGFUSE_TRACING:-false}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse:3000}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_ENVIRONMENT: ${LANGFUSE_ENVIRONMENT:-production}
+      CLIENT_TIER: ${CLIENT_TIER:-unspecified}
     volumes:
       # Not :ro -- ChromaDB is SQLite underneath and opens a journal even to read.
-      - ./chroma_db:/app/chroma_db
+      - chroma:/app/chroma_db
+      - results:/data
+
+  # --- the auditor cockpit ----------------------------------------------------------------
+  # Never containerised before Phase 7. It runs from the same image as the API because it is the
+  # same package -- only the entrypoint differs -- and it reaches the engine over HTTP like any
+  # other client, which is the whole point of Phase 6c.
+  ui:
+    build: .
+    command: >
+      streamlit run src/ui/cockpit.py
+      --server.port 8501 --server.address 0.0.0.0
+      --server.headless true --browser.gatherUsageStats false
+    ports: ["8501:8501"]
+    environment:
+      API_BASE_URL: http://api:8000
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:?set API_AUTH_TOKEN in your environment or .env}
+    depends_on: [api]
+
+  # --- Langfuse (HLD §6: self-hosted, so traces stay in-environment) ----------------------
+  langfuse:
+    image: langfuse/langfuse:3
+    ports: ["3000:3000"]
     depends_on:
-      redis: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    environment: &langfuse_env
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_DB_PASSWORD:-langfuse}@postgres:5432/langfuse
+      # All three are secrets with dev defaults so `up` works out of the box. Generate real ones for
+      # anything but a laptop: `openssl rand -hex 32` (and -base64 32 for the salt).
+      SALT: ${LANGFUSE_SALT:-changeme-salt-for-local-development-only}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-changeme-nextauth-secret-for-local-development}
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3000}
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-langfuse}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_CONNECTION_STRING: redis://cache:6379
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_PASSWORD:-miniosecret}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      TELEMETRY_ENABLED: "false"
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    depends_on:
+      postgres: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    # The worker needs exactly the web tier's configuration -- it reads the same three stores.
+    environment: *langfuse_env
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD:-langfuse}
+      POSTGRES_DB: langfuse
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes: [langfuse_postgres:/var/lib/postgresql/data]
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-langfuse}
+    # ClickHouse is where the traces themselves live, which is why v3 needs it: Postgres holds the
+    # projects and keys, and trace volume is a columnar workload.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    volumes: [langfuse_clickhouse:/var/lib/clickhouse]
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-miniosecret}
+    # Langfuse creates the bucket itself on first use given path-style addressing.
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes: [langfuse_minio:/data]
+
+  cache:
+    image: redis:7-alpine
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  # The audit engine's own state: reports that must outlive a container, and the indexed corpus,
+  # which is a build artefact of `finguard-store` rather than source.
+  results:
+  chroma:
+  # Langfuse's three stores.
+  langfuse_postgres:
+  langfuse_clickhouse:
+  langfuse_minio:

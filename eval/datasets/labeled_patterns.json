@@ -1,0 +1,1449 @@
+[
+  {
+    "id": "LP-cycle-001",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2022-10_private_banking_log.txt",
+    "cluster": "Cycle-12",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO22100700025",
+      "FGO22100800052",
+      "FGO22100900145",
+      "FGO22101100224",
+      "FGO22101300305",
+      "FGO22101400382",
+      "FGO22101500437",
+      "FGO22101700529",
+      "FGO22101800571",
+      "FGO22102000677"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-cycle-002",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2022-11_private_banking_log.txt",
+    "cluster": "Cycle-12",
+    "transactions": 1,
+    "txn_refs": [
+      "FGO22110501357"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-cycle-003",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2022-12_private_banking_log.txt",
+    "cluster": "Cycle-13",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO22121002747",
+      "FGO22121102796",
+      "FGO22121202844",
+      "FGO22121302920",
+      "FGO22121402940",
+      "FGO22121502993",
+      "FGO22121603060",
+      "FGO22121803107",
+      "FGO22122003193",
+      "FGO22122203250"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-cycle-004",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2023-01_private_banking_log.txt",
+    "cluster": "Cycle-10",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO23010803878",
+      "FGO23010903929",
+      "FGO23011003962",
+      "FGO23011104006",
+      "FGO23011204048",
+      "FGO23011304103",
+      "FGO23011404128",
+      "FGO23011504175",
+      "FGO23011604195",
+      "FGO23011704252"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-cycle-005",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2023-02_private_banking_log.txt",
+    "cluster": "Cycle-12",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO23020104808",
+      "FGO23020204842",
+      "FGO23020304904",
+      "FGO23020404952",
+      "FGO23020504989",
+      "FGO23020605040",
+      "FGO23020705086",
+      "FGO23020805110",
+      "FGO23020905193",
+      "FGO23021005209"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-cycle-006",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2023-03_private_banking_log.txt",
+    "cluster": "Cycle-11",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO23030106012",
+      "FGO23030206071",
+      "FGO23030306098",
+      "FGO23030406110",
+      "FGO23030506176",
+      "FGO23030606199",
+      "FGO23030706272",
+      "FGO23030806296",
+      "FGO23030906346",
+      "FGO23031006399"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-cycle-007",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2023-04_private_banking_log.txt",
+    "cluster": "Cycle-11",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO23040407360",
+      "FGO23040507379",
+      "FGO23040607433",
+      "FGO23040707452",
+      "FGO23040807517",
+      "FGO23040907564",
+      "FGO23041007585",
+      "FGO23041107660",
+      "FGO23041207704",
+      "FGO23041307738"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-cycle-008",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2023-05_private_banking_log.txt",
+    "cluster": "Cycle-13",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO23050808687",
+      "FGO23050908772",
+      "FGO23051008800",
+      "FGO23051108851",
+      "FGO23051208904",
+      "FGO23051308924",
+      "FGO23051408948",
+      "FGO23051509001",
+      "FGO23051709059",
+      "FGO23051909138"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-cycle-009",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2023-06_private_banking_log.txt",
+    "cluster": "Cycle-13",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO23060109605",
+      "FGO23060209654",
+      "FGO23060309682",
+      "FGO23060409746",
+      "FGO23060509779",
+      "FGO23060609828",
+      "FGO23060809903",
+      "FGO23061009982",
+      "FGO23061110052",
+      "FGO23061410167"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-cycle-010",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2023-07_private_banking_log.txt",
+    "cluster": "Cycle-10",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO23071811462",
+      "FGO23071911510",
+      "FGO23072011564",
+      "FGO23072111575",
+      "FGO23072211627",
+      "FGO23072311675",
+      "FGO23072411726",
+      "FGO23072511768",
+      "FGO23072611789",
+      "FGO23072711808"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-cycle-011",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2023-08_private_banking_log.txt",
+    "cluster": "Cycle-13",
+    "transactions": 4,
+    "txn_refs": [
+      "FGO23082013075",
+      "FGO23082113125",
+      "FGO23082213160",
+      "FGO23082313199"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-cycle-012",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2022-10_private_banking_log.txt",
+    "cluster": "Cycle-13",
+    "transactions": 4,
+    "txn_refs": [
+      "FGO22101700521",
+      "FGO22102000660",
+      "FGO22102500895",
+      "FGO22103001116"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-cycle-013",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2022-12_private_banking_log.txt",
+    "cluster": "Cycle-14",
+    "transactions": 9,
+    "txn_refs": [
+      "FGO22120202455",
+      "FGO22120302479",
+      "FGO22120402530",
+      "FGO22120502571",
+      "FGO22120602604",
+      "FGO22120702624",
+      "FGO22120802670",
+      "FGO22121002782",
+      "FGO22121202853"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-cycle-014",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2023-01_private_banking_log.txt",
+    "cluster": "Cycle-11",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO23010903927",
+      "FGO23011003990",
+      "FGO23011104039",
+      "FGO23011204060",
+      "FGO23011304125",
+      "FGO23011404131",
+      "FGO23011504173",
+      "FGO23011604215",
+      "FGO23011704234",
+      "FGO23011804297"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-cycle-015",
+    "pattern_type": "cycle",
+    "saml_d_typology": "Cycle",
+    "batch": "2023-02_private_banking_log.txt",
+    "cluster": "Cycle-13",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO23020605003",
+      "FGO23020705054",
+      "FGO23020805136",
+      "FGO23020905183",
+      "FGO23021005214",
+      "FGO23021105234",
+      "FGO23021205308",
+      "FGO23021405420",
+      "FGO23021605498",
+      "FGO23021705523"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-001",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2022-10_private_banking_log.txt",
+    "cluster": "Fan_In-07",
+    "transactions": 9,
+    "txn_refs": [
+      "FGO22102400841",
+      "FGO22102400881",
+      "FGO22102700976",
+      "FGO22102801017",
+      "FGO22102801028",
+      "FGO22102801053",
+      "FGO22103001120",
+      "FGO22103001121",
+      "FGO22103001142"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-002",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2022-11_private_banking_log.txt",
+    "cluster": "Fan_In-07",
+    "transactions": 4,
+    "txn_refs": [
+      "FGO22112702249",
+      "FGO22112802313",
+      "FGO22113002368",
+      "FGO22113002394"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-003",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2022-12_private_banking_log.txt",
+    "cluster": "Fan_In-07",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO22121302912",
+      "FGO22121402956",
+      "FGO22121803110",
+      "FGO22121903131",
+      "FGO22121903157",
+      "FGO22122103219",
+      "FGO22122103230",
+      "FGO22122303288",
+      "FGO22122303314",
+      "FGO22122303319"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-004",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2023-01_private_banking_log.txt",
+    "cluster": "Fan_In-07",
+    "transactions": 3,
+    "txn_refs": [
+      "FGO23010103630",
+      "FGO23010303691",
+      "FGO23010303692"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-005",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2023-02_private_banking_log.txt",
+    "cluster": "Fan_In-07",
+    "transactions": 7,
+    "txn_refs": [
+      "FGO23021705529",
+      "FGO23021905609",
+      "FGO23022005674",
+      "FGO23022105689",
+      "FGO23022105699",
+      "FGO23022305786",
+      "FGO23022405853"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-006",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2023-03_private_banking_log.txt",
+    "cluster": "Fan_In-07",
+    "transactions": 4,
+    "txn_refs": [
+      "FGO23032907097",
+      "FGO23033007120",
+      "FGO23033007141",
+      "FGO23033107164"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-007",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2023-04_private_banking_log.txt",
+    "cluster": "Fan_In-07",
+    "transactions": 9,
+    "txn_refs": [
+      "FGO23040107214",
+      "FGO23040207262",
+      "FGO23040207264",
+      "FGO23040207270",
+      "FGO23040207272",
+      "FGO23040407348",
+      "FGO23040507371",
+      "FGO23040507381",
+      "FGO23040507408"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-008",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2023-05_private_banking_log.txt",
+    "cluster": "Fan_In-07",
+    "transactions": 12,
+    "txn_refs": [
+      "FGO23051408965",
+      "FGO23051508986",
+      "FGO23051609044",
+      "FGO23051709075",
+      "FGO23051809115",
+      "FGO23051909154",
+      "FGO23052009188",
+      "FGO23052109224",
+      "FGO23052109228",
+      "FGO23052209247",
+      "FGO23052209250",
+      "FGO23052309297"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-009",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2023-06_private_banking_log.txt",
+    "cluster": "Fan_In-07",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO23060109607",
+      "FGO23060109645",
+      "FGO23060409728",
+      "FGO23060409731",
+      "FGO23060509786",
+      "FGO23060509794",
+      "FGO23060609811",
+      "FGO23060609818"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-010",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2023-07_private_banking_log.txt",
+    "cluster": "Fan_In-07",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO23072611793",
+      "FGO23072711828",
+      "FGO23072711829",
+      "FGO23072711840",
+      "FGO23072811857",
+      "FGO23072811860",
+      "FGO23072811866",
+      "FGO23072911890"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-011",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2023-08_private_banking_log.txt",
+    "cluster": "Fan_In-07",
+    "transactions": 7,
+    "txn_refs": [
+      "FGO23080812406",
+      "FGO23080912463",
+      "FGO23081112550",
+      "FGO23081312633",
+      "FGO23081312643",
+      "FGO23081412720",
+      "FGO23081512799"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-012",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2022-10_private_banking_log.txt",
+    "cluster": "Fan_In-08",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO22101400399",
+      "FGO22101600492",
+      "FGO22102100729",
+      "FGO22102200773",
+      "FGO22102300829",
+      "FGO22102400837",
+      "FGO22102400857",
+      "FGO22102400880"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-013",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2022-11_private_banking_log.txt",
+    "cluster": "Fan_In-08",
+    "transactions": 12,
+    "txn_refs": [
+      "FGO22111301707",
+      "FGO22111501767",
+      "FGO22111501777",
+      "FGO22111501778",
+      "FGO22111501792",
+      "FGO22111601815",
+      "FGO22111601852",
+      "FGO22111801890",
+      "FGO22111901970",
+      "FGO22112102016",
+      "FGO22112102030",
+      "FGO22112302129"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-014",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2022-12_private_banking_log.txt",
+    "cluster": "Fan_In-08",
+    "transactions": 11,
+    "txn_refs": [
+      "FGO22120802687",
+      "FGO22121002784",
+      "FGO22121102817",
+      "FGO22121202852",
+      "FGO22121302914",
+      "FGO22121402935",
+      "FGO22121402950",
+      "FGO22121603023",
+      "FGO22121603033",
+      "FGO22121803106",
+      "FGO22121803114"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_in-015",
+    "pattern_type": "fan_in",
+    "saml_d_typology": "Fan_In",
+    "batch": "2023-01_private_banking_log.txt",
+    "cluster": "Fan_In-08",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO23011904323",
+      "FGO23011904341",
+      "FGO23012104435",
+      "FGO23012204440",
+      "FGO23012404518",
+      "FGO23012404519",
+      "FGO23012404540",
+      "FGO23012504561"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-001",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2022-10_private_banking_log.txt",
+    "cluster": "Fan_Out-10",
+    "transactions": 3,
+    "txn_refs": [
+      "FGO22102801063",
+      "FGO22103101145",
+      "FGO22103101160"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-002",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2022-11_private_banking_log.txt",
+    "cluster": "Fan_Out-10",
+    "transactions": 4,
+    "txn_refs": [
+      "FGO22110101232",
+      "FGO22110401335",
+      "FGO22110601397",
+      "FGO22110601404"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-003",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2022-12_private_banking_log.txt",
+    "cluster": "Fan_Out-10",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO22120302469",
+      "FGO22120302481",
+      "FGO22120402516",
+      "FGO22120502542",
+      "FGO22120702636",
+      "FGO22120902690",
+      "FGO22120902719",
+      "FGO22121102818",
+      "FGO22121302868",
+      "FGO22121302893"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-004",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2023-01_private_banking_log.txt",
+    "cluster": "Fan_Out-09",
+    "transactions": 2,
+    "txn_refs": [
+      "FGO23013004730",
+      "FGO23013004750"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-005",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2023-02_private_banking_log.txt",
+    "cluster": "Fan_Out-09",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO23020504978",
+      "FGO23020605005",
+      "FGO23020605031",
+      "FGO23020805105",
+      "FGO23021205295",
+      "FGO23021205301",
+      "FGO23021205316",
+      "FGO23021305361"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-006",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2023-03_private_banking_log.txt",
+    "cluster": "Fan_Out-10",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO23031706636",
+      "FGO23031806667",
+      "FGO23031906712",
+      "FGO23032006740",
+      "FGO23032306873",
+      "FGO23032406906",
+      "FGO23032406925",
+      "FGO23032406937",
+      "FGO23032506982",
+      "FGO23032606994"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-007",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2023-04_private_banking_log.txt",
+    "cluster": "Fan_Out-10",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO23040907577",
+      "FGO23041207696",
+      "FGO23041207703",
+      "FGO23041307707",
+      "FGO23041407761",
+      "FGO23041507805",
+      "FGO23041507811",
+      "FGO23041607838"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-008",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2023-05_private_banking_log.txt",
+    "cluster": "Fan_Out-10",
+    "transactions": 6,
+    "txn_refs": [
+      "FGO23052609386",
+      "FGO23052709435",
+      "FGO23052809471",
+      "FGO23052809479",
+      "FGO23052809485",
+      "FGO23052909518"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-009",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2023-06_private_banking_log.txt",
+    "cluster": "Fan_Out-10",
+    "transactions": 9,
+    "txn_refs": [
+      "FGO23061009991",
+      "FGO23061009993",
+      "FGO23061109996",
+      "FGO23061110039",
+      "FGO23061310114",
+      "FGO23061410153",
+      "FGO23061410162",
+      "FGO23061510203",
+      "FGO23061610220"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-010",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2023-07_private_banking_log.txt",
+    "cluster": "Fan_Out-08",
+    "transactions": 4,
+    "txn_refs": [
+      "FGO23070210854",
+      "FGO23070410933",
+      "FGO23070611005",
+      "FGO23070611006"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-011",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2023-08_private_banking_log.txt",
+    "cluster": "Fan_Out-10",
+    "transactions": 10,
+    "txn_refs": [
+      "FGO23080712321",
+      "FGO23081012529",
+      "FGO23081112569",
+      "FGO23081212632",
+      "FGO23081312668",
+      "FGO23081312675",
+      "FGO23081412748",
+      "FGO23081512815",
+      "FGO23081612882",
+      "FGO23081712913"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-012",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2022-10_private_banking_log.txt",
+    "cluster": "Fan_Out-11",
+    "transactions": 7,
+    "txn_refs": [
+      "FGO22101500407",
+      "FGO22101600503",
+      "FGO22101700510",
+      "FGO22101700533",
+      "FGO22101800597",
+      "FGO22102200776",
+      "FGO22102300834"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-013",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2022-11_private_banking_log.txt",
+    "cluster": "Fan_Out-11",
+    "transactions": 9,
+    "txn_refs": [
+      "FGO22111701889",
+      "FGO22111801896",
+      "FGO22112102039",
+      "FGO22112202063",
+      "FGO22112202067",
+      "FGO22112302097",
+      "FGO22112602215",
+      "FGO22112702264",
+      "FGO22112702273"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-014",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2022-12_private_banking_log.txt",
+    "cluster": "Fan_Out-11",
+    "transactions": 9,
+    "txn_refs": [
+      "FGO22122303282",
+      "FGO22122303307",
+      "FGO22122303321",
+      "FGO22122403323",
+      "FGO22122503379",
+      "FGO22122603410",
+      "FGO22122803460",
+      "FGO22122803475",
+      "FGO22122903508"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-fan_out-015",
+    "pattern_type": "fan_out",
+    "saml_d_typology": "Fan_Out",
+    "batch": "2023-02_private_banking_log.txt",
+    "cluster": "Fan_Out-10",
+    "transactions": 4,
+    "txn_refs": [
+      "FGO23020204846",
+      "FGO23020204848",
+      "FGO23020905153",
+      "FGO23020905154"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-001",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2022-10_private_banking_log.txt",
+    "cluster": "Scatter-Gather-14",
+    "transactions": 6,
+    "txn_refs": [
+      "FGO22101200252",
+      "FGO22101200270",
+      "FGO22101400360",
+      "FGO22101400375",
+      "FGO22101700549",
+      "FGO22101900643"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-002",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2022-11_private_banking_log.txt",
+    "cluster": "Scatter-Gather-13",
+    "transactions": 3,
+    "txn_refs": [
+      "FGO22112202069",
+      "FGO22112402158",
+      "FGO22112702248"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-003",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2022-12_private_banking_log.txt",
+    "cluster": "Scatter-Gather-16",
+    "transactions": 4,
+    "txn_refs": [
+      "FGO22122503371",
+      "FGO22122603414",
+      "FGO22122803455",
+      "FGO22122803464"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-004",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2023-01_private_banking_log.txt",
+    "cluster": "Scatter-Gather-13",
+    "transactions": 7,
+    "txn_refs": [
+      "FGO23010203646",
+      "FGO23010203648",
+      "FGO23010403716",
+      "FGO23010403749",
+      "FGO23010603801",
+      "FGO23010703845",
+      "FGO23010803882"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-005",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2023-02_private_banking_log.txt",
+    "cluster": "Scatter-Gather-15",
+    "transactions": 4,
+    "txn_refs": [
+      "FGO23020805134",
+      "FGO23021105240",
+      "FGO23021205280",
+      "FGO23021205313"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-006",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2023-03_private_banking_log.txt",
+    "cluster": "Scatter-Gather-14",
+    "transactions": 4,
+    "txn_refs": [
+      "FGO23031006384",
+      "FGO23031006400",
+      "FGO23031106453",
+      "FGO23031606600"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-007",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2023-04_private_banking_log.txt",
+    "cluster": "Scatter-Gather-14",
+    "transactions": 5,
+    "txn_refs": [
+      "FGO23042708252",
+      "FGO23042808262",
+      "FGO23042808273",
+      "FGO23042908330",
+      "FGO23042908337"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-008",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2023-05_private_banking_log.txt",
+    "cluster": "Scatter-Gather-16",
+    "transactions": 7,
+    "txn_refs": [
+      "FGO23050808730",
+      "FGO23050908745",
+      "FGO23051108818",
+      "FGO23051108840",
+      "FGO23051208874",
+      "FGO23051308913",
+      "FGO23051308927"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-009",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2023-06_private_banking_log.txt",
+    "cluster": "Scatter-Gather-16",
+    "transactions": 6,
+    "txn_refs": [
+      "FGO23061810303",
+      "FGO23061810325",
+      "FGO23062410560",
+      "FGO23062410581",
+      "FGO23062610635",
+      "FGO23062710668"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-010",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2023-07_private_banking_log.txt",
+    "cluster": "Scatter-Gather-13",
+    "transactions": 6,
+    "txn_refs": [
+      "FGO23072011524",
+      "FGO23072011553",
+      "FGO23072111578",
+      "FGO23072111612",
+      "FGO23072411723",
+      "FGO23072411728"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-011",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2023-08_private_banking_log.txt",
+    "cluster": "Scatter-Gather-15",
+    "transactions": 6,
+    "txn_refs": [
+      "FGO23081312636",
+      "FGO23081512808",
+      "FGO23081612828",
+      "FGO23081612838",
+      "FGO23081712899",
+      "FGO23081712914"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-012",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2022-12_private_banking_log.txt",
+    "cluster": "Scatter-Gather-17",
+    "transactions": 7,
+    "txn_refs": [
+      "FGO22122303298",
+      "FGO22122503390",
+      "FGO22122603420",
+      "FGO22122603421",
+      "FGO22122903502",
+      "FGO22123003535",
+      "FGO22123003557"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-013",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2023-01_private_banking_log.txt",
+    "cluster": "Scatter-Gather-14",
+    "transactions": 4,
+    "txn_refs": [
+      "FGO23010303664",
+      "FGO23010503771",
+      "FGO23010703834",
+      "FGO23010703843"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-014",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2023-02_private_banking_log.txt",
+    "cluster": "Scatter-Gather-16",
+    "transactions": 5,
+    "txn_refs": [
+      "FGO23020304896",
+      "FGO23020504985",
+      "FGO23020905175",
+      "FGO23021105249",
+      "FGO23021105261"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-scatter_gather-015",
+    "pattern_type": "scatter_gather",
+    "saml_d_typology": "Scatter-Gather",
+    "batch": "2023-03_private_banking_log.txt",
+    "cluster": "Scatter-Gather-15",
+    "transactions": 7,
+    "txn_refs": [
+      "FGO23030206049",
+      "FGO23030206063",
+      "FGO23030406119",
+      "FGO23030406143",
+      "FGO23030606208",
+      "FGO23030706242",
+      "FGO23030706255"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-001",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2022-10_private_banking_log.txt",
+    "cluster": "Smurfing-04",
+    "transactions": 7,
+    "txn_refs": [
+      "FGO22101200269",
+      "FGO22101300314",
+      "FGO22101400356",
+      "FGO22101700520",
+      "FGO22101800577",
+      "FGO22101900624",
+      "FGO22102100728"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-002",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2022-11_private_banking_log.txt",
+    "cluster": "Smurfing-04",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO22111401724",
+      "FGO22111501787",
+      "FGO22111601805",
+      "FGO22111701862",
+      "FGO22111801924",
+      "FGO22112102022",
+      "FGO22112202062",
+      "FGO22112302096"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-003",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2022-12_private_banking_log.txt",
+    "cluster": "Smurfing-04",
+    "transactions": 6,
+    "txn_refs": [
+      "FGO22121202849",
+      "FGO22121302884",
+      "FGO22121402932",
+      "FGO22121502988",
+      "FGO22121603013",
+      "FGO22122003188"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-004",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2023-01_private_banking_log.txt",
+    "cluster": "Smurfing-04",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO23010503773",
+      "FGO23010603798",
+      "FGO23010903917",
+      "FGO23011003969",
+      "FGO23011104009",
+      "FGO23011204047",
+      "FGO23011304091",
+      "FGO23011304105"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-005",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2023-02_private_banking_log.txt",
+    "cluster": "Smurfing-04",
+    "transactions": 7,
+    "txn_refs": [
+      "FGO23020104817",
+      "FGO23020204856",
+      "FGO23020304901",
+      "FGO23020605022",
+      "FGO23020805115",
+      "FGO23020905179",
+      "FGO23021005215"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-006",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2023-03_private_banking_log.txt",
+    "cluster": "Smurfing-04",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO23030606214",
+      "FGO23030706245",
+      "FGO23030706246",
+      "FGO23030806288",
+      "FGO23030906335",
+      "FGO23031006394",
+      "FGO23031306506",
+      "FGO23031406535"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-007",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2023-04_private_banking_log.txt",
+    "cluster": "Smurfing-04",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO23041107640",
+      "FGO23041207682",
+      "FGO23041307719",
+      "FGO23041407776",
+      "FGO23041707876",
+      "FGO23041807916",
+      "FGO23041907952",
+      "FGO23042008002"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-008",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2023-05_private_banking_log.txt",
+    "cluster": "Smurfing-04",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO23050808686",
+      "FGO23050908762",
+      "FGO23051008793",
+      "FGO23051108832",
+      "FGO23051208875",
+      "FGO23051508988",
+      "FGO23051609034",
+      "FGO23051709067"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-009",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2023-06_private_banking_log.txt",
+    "cluster": "Smurfing-04",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO23060709852",
+      "FGO23060809881",
+      "FGO23060909921",
+      "FGO23061210064",
+      "FGO23061310111",
+      "FGO23061410146",
+      "FGO23061510179",
+      "FGO23061610233"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-010",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2023-07_private_banking_log.txt",
+    "cluster": "Smurfing-04",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO23071011139",
+      "FGO23071111187",
+      "FGO23071111189",
+      "FGO23071211245",
+      "FGO23071311270",
+      "FGO23071411301",
+      "FGO23071711426",
+      "FGO23071811452"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-011",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2023-08_private_banking_log.txt",
+    "cluster": "Smurfing-04",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO23081412709",
+      "FGO23081512772",
+      "FGO23081512777",
+      "FGO23081612865",
+      "FGO23081712909",
+      "FGO23081812959",
+      "FGO23082113108",
+      "FGO23082113113"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-012",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2022-10_private_banking_log.txt",
+    "cluster": "Smurfing-05",
+    "transactions": 7,
+    "txn_refs": [
+      "FGO22101000165",
+      "FGO22101100205",
+      "FGO22101100215",
+      "FGO22101200261",
+      "FGO22101300301",
+      "FGO22101400355",
+      "FGO22101700524"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-013",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2022-11_private_banking_log.txt",
+    "cluster": "Smurfing-05",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO22111601814",
+      "FGO22111701880",
+      "FGO22111801919",
+      "FGO22112102037",
+      "FGO22112202052",
+      "FGO22112302085",
+      "FGO22112402154",
+      "FGO22112502176"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-014",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2022-12_private_banking_log.txt",
+    "cluster": "Smurfing-05",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO22121202840",
+      "FGO22121302890",
+      "FGO22121302902",
+      "FGO22121402927",
+      "FGO22121502974",
+      "FGO22121603030",
+      "FGO22121903133",
+      "FGO22122003177"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  },
+  {
+    "id": "LP-structuring-015",
+    "pattern_type": "structuring",
+    "saml_d_typology": "Smurfing",
+    "batch": "2023-01_private_banking_log.txt",
+    "cluster": "Smurfing-05",
+    "transactions": 8,
+    "txn_refs": [
+      "FGO23010503775",
+      "FGO23010603815",
+      "FGO23010903921",
+      "FGO23011003963",
+      "FGO23011003982",
+      "FGO23011104018",
+      "FGO23011204059",
+      "FGO23011304089"
+    ],
+    "detected_when": "a candidate covers >= 0.5 of txn_refs",
+    "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)"
+  }
+]

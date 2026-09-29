@@ -24,13 +24,17 @@ Usage::
 
 from __future__ import annotations
 
+import logging
+
 import argparse
 import json
 import re
 from dataclasses import asdict, dataclass, field
-from datetime import date
+from datetime import date, datetime, time, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+
+from src.models import TransactionRecord
 
 # A tag is two digits and an optional letter, anchored at the start of a line. Anything else
 # inside a message is a continuation of whichever tag is currently open -- which is how
@@ -40,6 +44,8 @@ TAG = re.compile(r"^:(\d{2}[A-Z]?):(.*)$")
 BLOCK_1 = re.compile(r"\{1:F01(?P<terminal>[A-Z0-9]+?)\d{10}\}")
 BLOCK_2 = re.compile(r"\{2:I103(?P<receiver>[A-Z0-9]{8,11})[NUS]\}")
 BLOCK_3 = re.compile(r"\{3:\{121:(?P<uetr>[0-9a-fA-F-]{36})\}\}")
+
+log = logging.getLogger(__name__)
 
 MESSAGE_OPEN = "{1:"
 MESSAGE_CLOSE = "-}"
@@ -166,13 +172,30 @@ def read_text(path: Path) -> str:
     pdf_generator.py writes one PDF cell per line, so extraction round-trips the lines. Blank
     lines are dropped along the way, which is why messages are delimited by ``{1:``/``-}``
     rather than by blank-line separation.
+
+    **A text batch is not assumed to be UTF-8.** SWIFT is historically ASCII, but a real MT103 file
+    carries customer names, and a file exported from an older system arrives as Latin-1 -- one
+    accented character in one name. `read_text(encoding="utf-8")` raised `UnicodeDecodeError` out of
+    the parser and lost the other 499 messages with it; the eval harness's MI-004 fixture is that
+    exact file. Latin-1 decodes every possible byte, so it cannot fail, and the fields that matter --
+    references, accounts, amounts, dates -- are ASCII either way and come through byte-exact. The
+    cost is that one name may render with the wrong accent, which is the right thing to lose.
     """
     if path.suffix.lower() == ".pdf":
         import pypdf
 
         reader = pypdf.PdfReader(str(path))
         return "\n".join(page.extract_text() or "" for page in reader.pages)
-    return path.read_text(encoding="utf-8")
+
+    raw = path.read_bytes()
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        log.warning(
+            "%s is not valid UTF-8 (%s at byte %d); decoding as Latin-1",
+            path.name, error.reason, error.start,
+        )
+        return raw.decode("latin-1")
 
 
 def split_messages(text: str) -> list[list[str]]:
@@ -316,6 +339,57 @@ def parse_message(lines: list[str], ordinal: int) -> Wire:
         )
     except ValueError as error:
         raise fail(str(error)) from None
+
+
+# --- the standard contract ------------------------------------------------------------
+#
+# `TransactionRecord` is what detection, retrieval and the model see. `Wire` remains the *parser's*
+# own output -- it carries the BICs, names and addresses an MT103 actually contains, none of which
+# anything downstream of parsing needs -- and `to_record` is the one-way narrowing between them.
+# The reverse adapter is gone with the detectors that needed it: nothing converts back.
+
+# `:72:` carries the payment type and the wall-clock time the generator rendered:
+# "/INS/CHEQUE 04:22:05". Without it a record is midnight, and every detector works on a window.
+_INSTRUCTION_TIME = re.compile(r"\b(\d{2}):(\d{2}):(\d{2})\b")
+
+
+def instruction_time(instruction: str) -> time:
+    match = _INSTRUCTION_TIME.search(instruction or "")
+    if match is None:
+        return time(0, 0, 0)
+    hour, minute, second = (int(part) for part in match.groups())
+    return time(hour, minute, second)
+
+
+def to_record(wire: Wire) -> TransactionRecord:
+    """A parsed wire as the standard contract.
+
+    The timestamp is timezone-aware because `TransactionRecord` requires it: a naive timestamp
+    cannot be compared across a batch that crosses a DST boundary, and every detector is a time
+    window. `:32A:` gives only a date, so `:72:`'s time supplies the rest.
+    """
+    moment = datetime.combine(
+        wire.value_date, instruction_time(wire.instruction), tzinfo=timezone.utc
+    )
+    return TransactionRecord(
+        txn_ref=wire.reference,
+        sender_account=wire.sender_account,
+        receiver_account=wire.receiver_account,
+        amount=wire.amount,
+        currency=wire.currency,
+        timestamp=moment,
+        sender_country=wire.sender_country,
+        receiver_country=wire.receiver_country,
+        # `:72:` is "/INS/<type> <time>"; the type is the instrument.
+        instrument=(wire.instruction.split("/INS/")[-1].split()[0] if "/INS/" in wire.instruction
+                    else wire.bank_operation_code or "UNKNOWN"),
+        txn_type=wire.bank_operation_code or None,
+        # Attacker-controlled free text. It reaches the candidate and the grounding context on
+        # purpose -- Evaluation Design §5's injection fixture tests nothing if it does not -- and
+        # redaction covers it before any external call.
+        memo=wire.memo,
+        extraction_method="deterministic",
+    )
 
 
 def parse_batch(path: Path | str, *, strict: bool = False) -> Batch:

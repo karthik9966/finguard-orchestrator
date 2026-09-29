@@ -1,0 +1,263 @@
+# FinGuard tunable parameters -- LLD §8.
+#
+# The split this file enforces: **numbers never in code, secrets never in this file.** Anything
+# with a dollar value, a threshold, a count or a window lives here; API keys, hostnames and
+# database URLs live in the environment and are read by `Settings` in src/config.py.
+#
+# Every number carried over from the pre-migration system keeps the measurement that chose it.
+# Those measurements were taken on this repository, not projected, and a change to one of them
+# should be accompanied by a new measurement -- not a hunch.
+
+schema: 1
+
+# ---------------------------------------------------------------------------------------------
+# Retrieval -- LLD §2.4
+# ---------------------------------------------------------------------------------------------
+retrieval:
+  # Tier-2 indicator candidates pulled from the vector store before reranking. 15 is the
+  # blueprint figure and the one every recorded hit@k number was measured at (hit@15 79.2%),
+  # so changing it invalidates the retrieval benchmark's comparability.
+  k_indicators: 15
+
+  # How many reranked indicators reach the grounding prompt. The pre-migration system carried
+  # 24 clauses because ONE pool was shared by every candidate in the batch; per-candidate
+  # retrieval does not need that, and a cross-encoder's precision is concentrated at the top.
+  # Provisional: Phase 8's Complex_Query_Set context precision sets this for real.
+  rerank_top_n: 5
+
+  # LLD §2.4 specifies a single query_text per candidate. The pre-migration system issued 2-4
+  # templated queries and fused them with reciprocal rank fusion, which measurably beat every
+  # alternative merge (the cited clause moved from rank 20 to 10). That win was on *semantic
+  # discovery of obligations*, which the curated Tier-1 map now replaces -- so single-query is
+  # the default and RRF stays available behind this flag until Phase 8 measures both.
+  multi_query_rrf: false
+  rrf_k: 60           # from the original RRF paper; only read when multi_query_rrf is true
+
+# ---------------------------------------------------------------------------------------------
+# Detection -- LLD §2.6
+# ---------------------------------------------------------------------------------------------
+detection:
+  # The observation window every detector shares, in days.
+  #
+  # Was 7, inherited from the path detector's MAX_PATH_GAP_DAYS, with a note that applying a
+  # window to fan-in and fan-out was "a behaviour change to watch in the recall harness". The
+  # harness watched, and 7 was too tight: SAML-D plants its clusters across 9-10 days, so a
+  # 7-day window cannot hold one. Measured across the four dev batches:
+  #
+  #     window  7d -> 85% recall, 19 candidates
+  #     window 10d -> 96% recall, 20 candidates
+  #     window 14d -> 99% recall, 20 candidates
+  #
+  # Recall rises 14 points for one extra candidate, so the window was the binding constraint and
+  # the amount band was not -- widening the band from 0.2 to 0.7 moved recall not at all at 7d.
+  window_days: 14
+
+  structuring:
+    # US monitored thresholds. $10,000 is the CTR filing threshold (31 CFR 1010.311); $3,000 is
+    # the funds-transfer recordkeeping threshold (31 CFR 1010.410).
+    thresholds: [10000, 3000]
+    # A transaction counts toward structuring when it sits in [T - band, T). The LLD names a
+    # single absolute `band`, which cannot serve both thresholds sensibly -- an absolute 2000
+    # would make the $3,000 band [1000, 3000), catching most ordinary payments. A fraction of T
+    # gives [8000, 10000) and [2400, 3000). Deviation from LLD §8, recorded deliberately.
+    band_fraction: 0.2
+    min_count: 3          # fewer than 3 sub-threshold transfers is not a pattern
+    min_aggregate_multiple: 1.0   # the group must total at least T to be worth reporting
+
+  # 3 was inherited from MIN_CLUSTER_WIRES, on the grounds that 4 "lost Layered_Fan_Out
+  # entirely" -- a typology PRD §2 now excludes, so that reason no longer applies. Measured
+  # across the dev batches and the 10,000-message batch:
+  #
+  #     min  3 -> 99% recall,  20 dev candidates, 729 on the 10k batch
+  #     min  4 -> 99% recall,  19 dev candidates, 304
+  #     min  5 -> 96% recall,  17 dev candidates, 119
+  #     min  6 -> 96% recall,  17 dev candidates,  41
+  #
+  # 4 keeps recall whole and more than halves the volume at scale. Going further buys a much
+  # shorter list for three points of recall, and in AML a miss is a regulatory failure while a
+  # false alarm costs an analyst minutes -- so the trade is left here, with the curve recorded
+  # so it can be made differently on evidence.
+  fan_in:
+    min_sources: 4
+  fan_out:
+    min_targets: 4
+  cycle:
+    min_hops: 3
+    max_length: 25
+    # Above this share of overlapping transaction references, a chain is a retelling of one
+    # already reported. Without it a single ring produced 11 near-duplicate chains; it found 2
+    # after. Branching chains are not subsets of each other, so plain subset dedup misses them.
+    path_overlap: 0.6
+    # Funds must come back roughly intact for a ring to read as laundering rather than
+    # coincidence. SAML-D cycles decay 10-20% per hop.
+    min_retained_fraction: 0.5
+  scatter_gather:
+    min_fan: 3            # one -> many -> one needs at least three intermediaries to be a shape
+
+  # detection_confidence = f(tightness, count, window compactness, aggregate ratio).
+  # Weights sum to 1.0. Tightness is measured on the threshold-band subset, never the whole
+  # group: one legitimate large wire moved a cluster's coefficient of variation by 43x, which is
+  # the recorded weakness of the pre-migration scoring.
+  confidence_weights:
+    tightness: 0.4
+    member_count: 0.2
+    window_compactness: 0.2
+    aggregate_ratio: 0.2
+
+  # CandidateReconciler precedence, strongest claim first. This is load-bearing rather than
+  # hygiene: fan_out fires on the first leg of every scatter_gather and on several typologies
+  # the PRD puts out of scope (gather-scatter, layered fan-out, bipartite), so the more specific
+  # shape must win before fan_out is allowed to report the same transactions.
+  precedence_order: [structuring, cycle, scatter_gather, fan_in, fan_out]
+
+# ---------------------------------------------------------------------------------------------
+# Reasoning core -- LLD §5
+# ---------------------------------------------------------------------------------------------
+reasoning:
+  # Below this critique score the retrieval question is reformulated and the candidate loops.
+  confidence_threshold: 0.75
+  # The give-up point, after which a candidate finalises as needs_review. 17.2% of gold
+  # questions have no correct clause in the top 15 at all, so a third attempt usually spends
+  # money on a clause that is not in the collection.
+  max_loops: 2
+  # The bar a finding must clear to be filed High. High means *file a SAR*, so it needs the top
+  # band, not merely enough score to stop the loop. Applied in ReportGenerationNode -- NOT in
+  # the critic, whose prompt forbids it from changing any fact.
+  high_risk_min_confidence: 0.9
+  # A model that returns off-schema output is re-prompted with the validation error before the
+  # candidate is given up on (LLD §6, SCHEMA_PARSE_FAILURE).
+  schema_retries: 3
+  llm_max_attempts: 3          # tenacity attempts on 429/5xx/timeout
+  llm_timeout_seconds: 60
+  # There is deliberately **no candidate cap**. Measured on the June dev batch (500 messages,
+  # 5 candidates), twice:
+  #
+  #     16 calls, 37,684 tokens, $0.1242  ->  $0.0248 per candidate  (one candidate looped twice)
+  #     12 calls, 27,051 tokens, $0.0908  ->  $0.0182 per candidate  (one candidate looped once)
+  #
+  # A range rather than a number, because the loop is what varies: at temperature 0 the critic still
+  # scored the same drafts differently across runs, and each extra pass is two more calls. So
+  # $0.018-$0.025 per candidate, which projects to roughly $5.50-$7.50 for the 304 candidates the
+  # 10,000-message batch produces. Phase 8 decides whether that is worth capping, against those
+  # numbers rather than against a hunch. A cap by detection_confidence is ruled out on evidence:
+  # Phase 3 measured confidence as *anti-correlated* with planted wires (incidental 0.562, planted
+  # 0.395), so it would drop the real findings first.
+
+# ---------------------------------------------------------------------------------------------
+# Persistence -- LLD §3.2, §6 RESULTS_STORE_WRITE_FAILURE
+# ---------------------------------------------------------------------------------------------
+persistence:
+  # A write failure is retryable infrastructure, not a bad report. The run has already been paid
+  # for by the time step 8 is reached -- five candidates of grounding and review -- so throwing the
+  # result away because the disk was busy for 300ms would be the most expensive possible response.
+  # After the attempts are exhausted the report is *held* in memory and the error surfaced, so a
+  # caller can re-save rather than re-run.
+  write_attempts: 3
+  write_backoff_seconds: 0.5
+
+# ---------------------------------------------------------------------------------------------
+# Chunking -- LLD §2.1
+# ---------------------------------------------------------------------------------------------
+chunking:
+  min_chars: 200
+  max_chars: 2000
+  percentile: 95.0              # cosine-boundary threshold, computed per document
+  min_sentences_for_percentile: 6
+  min_passage_chars: 40         # below this a passage is a bare heading, not a clause
+  context_prefix_below: 200     # short chunks get a "{title} - {clause}: " prefix to stay citable
+
+# ---------------------------------------------------------------------------------------------
+# Ingestion -- LLD §2.2
+# ---------------------------------------------------------------------------------------------
+ingestion:
+  upsert_batch: 1000
+  # LLD §6 INGEST_ROW_MALFORMED: a line that fails deterministic parsing gets exactly one
+  # light-model extraction attempt. If that also fails it is quarantined, never guessed at.
+  llm_fallback_attempts: 1
+
+# ---------------------------------------------------------------------------------------------
+# Tier-1 obligation map -- LLD §2.4
+#
+# Curated as (source_id, section_ref) pairs, NOT chunk ids. A chunk id is
+# hash(source_id, section_ref, version), so a re-chunk or a version bump would silently
+# invalidate literal ids -- and per LLD §6 an OBLIGATION_MAP_MISS disables grounding for an
+# entire typology. VectorStoreClient.resolve() turns these pairs into ids at load time, and
+# tests/test_obligation_map.py asserts every one of them resolves.
+#
+# Filled in Phase 1c, once the US corpus is acquired and chunked. Empty is a valid state only
+# before then: the resolve test fails loudly on an empty map.
+# ---------------------------------------------------------------------------------------------
+pattern_to_obligations:
+  # § 1020.320(a) is the SAR duty itself and backs every typology: whatever shape the activity
+  # took, that is the obligation a filing rests on. (a)(2)(ii) and (a)(2)(iii) are the two limbs
+  # that describe *why* -- designed to evade a requirement, and no apparent lawful purpose.
+  structuring:
+    # The prohibition itself, its structuring limb, and the $10,000 CTR duty it exists to evade.
+    - {source_id: 31usc5324,     section_ref: "§ 5324"}
+    - {source_id: 31usc5324,     section_ref: "§ 5324(a)(3)"}
+    - {source_id: 31cfr1010.311, section_ref: "§ 1010.311"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(ii)"}
+
+  # Many senders into one account. The recordkeeping duty applies because the legs are transfers,
+  # and the no-lawful-purpose limb is what makes the aggregate reportable.
+  fan_in:
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(iii)"}
+    - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(e)"}
+    - {source_id: 31cfr1020.210, section_ref: "§ 1020.210(a)"}
+
+  # One account paying many. Same duties, and the CDD programme requirement is what should have
+  # established whether this profile was expected.
+  fan_out:
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(iii)"}
+    - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(e)"}
+    - {source_id: 31cfr1020.210, section_ref: "§ 1020.210(a)"}
+
+  # Funds returning to their origin through intermediaries. Layering has no economic purpose by
+  # construction, which is (a)(2)(iii); the travel rule is what makes the hops traceable at all.
+  cycle:
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(iii)"}
+    - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(e)"}
+    - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(f)"}
+
+  # Dispersal then re-collection. Both evasion limbs apply: the split is designed to evade, and
+  # the reassembly has no apparent purpose.
+  scatter_gather:
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(ii)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(iii)"}
+    - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(e)"}
+
+# ---------------------------------------------------------------------------------------------
+# topic_tags per source (LLD §3.2). Inherited by every chunk cut from that source, and the
+# Tier-2 indicator filter in Phase 4 reads them.
+#
+# Curated rather than derived: the manifest's `note` was written as prose for a human, and tags
+# inferred from it would be inconsistent in exactly the way a filter cannot tolerate. A tag that
+# names a typology must be one of PATTERN_TYPES -- config.py rejects a typo at startup rather
+# than letting it silently narrow a retrieval to nothing.
+# ---------------------------------------------------------------------------------------------
+source_topics:
+  31usc5324:                                [structuring, ctr]
+  31cfr1010.311:                            [ctr, reporting]
+  31cfr1010.410:                            [funds_transfer, recordkeeping]
+  31cfr1020.210:                            [customer_due_diligence]
+  31cfr1020.320:                            [sar, reporting]
+  finra-3110:                               [supervision]
+  finra-3310:                               [aml_program]
+  finra-rn-19-18:                           [red_flags, structuring, funds_transfer]
+  ffiec-appendix-f:                         [red_flags, structuring, funds_transfer, cash]
+  ffiec-manual-sar:                         [sar, reporting]
+  ffiec-manual-ctr:                         [ctr, reporting]
+  ffiec-manual-funds-transfer-recordkeeping: [funds_transfer, recordkeeping]
+  ffiec-manual-monetary-instruments:        [monetary_instruments, cash]
+  ffiec-risk-ach:                           [ach, funds_transfer]
+  ffiec-risk-cash-intensive:                [cash, structuring]
+  ffiec-risk-concentration-accounts:        [concentration, fan_in]
+  ffiec-risk-funds-transfers:               [funds_transfer, wire, scatter_gather]
+  fincen-2022-alert002:                     [red_flags, sanctions]
+  fincen-2022-alert003:                     [red_flags, export_control]
+  fincen-2023-alert002:                     [red_flags, real_estate]
