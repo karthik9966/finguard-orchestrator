@@ -168,7 +168,7 @@ def context_precision() -> list[Metric]:
             retriever.queries.indicator_query(candidate), notes
         )
         ids = [chunk.chunk_id for chunk in ranked]
-        correct = corpora.resolve_pair(query.correct)
+        correct = corpora.resolve_pair(query.correct) # type: ignore
 
         hit_at_1 = bool(ids) and ids[0] == correct
         hit_at_3 = correct in ids[:3]

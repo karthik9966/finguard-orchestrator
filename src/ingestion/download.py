@@ -1130,6 +1130,7 @@ def check() -> int:
 
 
 def main() -> int:
+    assert __doc__ is not None
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--check", action="store_true", help="verify the manifest, fetch nothing")
