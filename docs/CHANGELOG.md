@@ -3,13 +3,96 @@
 Implementation log for FinGuard Orchestrator.
 
 - **v1 build** — 2026-08-13 → 2026-09-08, 17 commits, four phases. Below, from "Phase 4 — Cockpit".
-- **v2 migration** — 2026-09-27 → 2026-09-29, 16 commits, ten phases. Immediately below this line.
+- **v2 migration** — 2026-09-27 → 2026-09-29, 16 commits, ten phases. Below the graph section.
+- **v2 graph engine** — 2026-09-29, branch `migrate/v2-graph`, against the `_v2.docx` design set.
+  Immediately below this line.
 
 This is a record of **what changed and why**, and the "why" is usually a measurement or a defect
 rather than a preference. Where a decision reversed an earlier one, both are kept — a changelog
 that only shows the winning branch hides the reason the winner won. The v1 section is left intact
 for that reason: much of what v2 replaced, it replaced for a measured cause, and the measurement
 lives in the entry that introduced the thing.
+
+---
+
+# v2 graph — nine patterns over one money-flow graph
+
+Against `FinGuard_PRD_v2`, `HLD_v2`, `LLD_v2` and `Eval_Design_v2`, whose change is one thing: the
+transaction graph becomes the detection substrate, and coverage grows from five detectors to nine
+patterns. The plan followed the documents; the data corrected them in six places, all recorded in
+[DESIGN.md](DESIGN.md) under "Deviations".
+
+## P2 · `0daa265` — keep the whole payment type
+
+`swift_parser` kept the first word of `:72:/INS/<type>`, so `CASH DEPOSIT` and `CASH WITHDRAWAL` both
+became `CASH`. LLD v2 designs deposit-send around SAML-D having no deposit/withdrawal split; SAML-D has
+225,206 deposits and 300,477 withdrawals. **The document was describing our parser.** Fixed at the
+source; `TransactionRecord.payment_kind` normalises in one place.
+
+## P3 · `2cd478b` — the GraphEngine, a `graph_build` node, and a redaction gap
+
+`BatchGraph` gains bounded structural queries — `counterparties`, `hub_nodes`, `multi_hop_layers`,
+`bipartite_blocks`, `subgraph` — and `GraphBuildNode` builds it once, ahead of detection. A 14,280-edge
+near-complete graph runs every query in under a second.
+
+*Found on the way:* a cycle's `route` and a scatter-gather's `sink`/`intermediaries` had gone into the
+grounding prompt as **raw account numbers** since v1. Redaction dispatches on field name and those names
+were never listed. The subgraph's `source`/`target`/`nodes` would have widened the hole; all covered now.
+
+## P1 + P4 · `2620f57` — nine patterns, four detectors, and a golden set that is held out
+
+Landed together because the contract cannot be green without the detectors: `precedence_order` must
+name every pattern, and `detect_all` refuses a precedence entry no detector registers.
+
+Detector findings, each from data rather than from the documents:
+
+- **Deposit-send's discriminator is the amount, not the timing.** 66% of clean depositors send
+  *something* within three days; a send matching the deposit within 5%, about 4%.
+- **Structuring groups by beneficiary too.** Every SAML-D Structuring cluster is many parties paying
+  one account; originator grouping could see none, and fan-in had been covering for it.
+- **Layered fan leaves are windowed per branch.** Windowing the whole structure let one busy
+  branch's month of unrelated traffic push a real funnel out of range.
+- **Gather-scatter's conservation band is wide** (0.5–2.0) because SAML-D hubs run 0.80–4.06.
+
+Corpus findings — the larger half of this commit:
+
+- **v1's held-out corpus was not held out.** Both profiles took the largest clusters of the same
+  months; all 84 of v1's dev-planted rows were planted in eval too, and 3 of 75 golden instances were
+  tuning clusters (verified by regenerating v1's corpora from `a374ac5`). Clusters are now partitioned
+  by a hash of the anchor account: **0 rows** shared.
+- **Scatter-Gather was planted as its scatter leg.** Anchored selection took only the edges touching
+  one account. A `COMPONENT` shape plants whole structures.
+- **Month boundaries cut structures in half.** Most planted "Gather-Scatter" instances were only their
+  scatter side. Structural clusters are planted only when whole inside a month.
+- **Two patterns cannot reach fifteen.** Whole + held out leaves scatter_gather 6 and gather_scatter
+  12. *Decision (project owner, 2026-09-29):* take every instance, record the shortfall on each record,
+  report the denominator — rather than plant half-shapes or tune on golden clusters.
+- **Option 1** as a data policy: eval takes every threshold-aligned structuring and deposit-send
+  cluster (~21 structuring exist in all of SAML-D), dev takes none. Smurfing leaves scope.
+
+*Reversal:* the first v2 tuning pass began sweeping on three dev instances per pattern — too few to
+tell a threshold from noise. Dev was widened to seven months × two clusters (93 instances) and every v2
+number was swept there instead.
+
+Measured on eval: pattern-level recall **0.827 → 0.959**; structuring **5/15 → 15/15**; alert volume
+**19.1% → 9.2%**; named recall 0.886; scatter_gather 5/6 fails the new per-pattern gate; context
+precision hit@1 **0.60 → 0.33**, all of the drop in the four new queries, characterised not tuned.
+
+## P5 · `9d68e21` — the matched structure, three ways
+
+`evidence.describe()` for the report summary (still no model call), `edge_lines()` for the grounding
+prompt (redacted, capped at 30), `to_dot()` for the cockpit's `st.graphviz_chart`. `SCHEMA_VERSION`
+2.0 → 2.1, additive.
+
+## P6 · `616d153` — graph-engine correctness as a PR-gate step
+
+It already ran in the full suite; Eval Design v2 names it a hard gate, so it gets its own line.
+
+## P7 — docs as built
+
+[HLD.md](HLD.md) and [LLD.md](LLD.md) rewritten for v2 from their v1 versions, keeping what still holds;
+DESIGN, CONSTANTS, TEST_DESIGN, TEST_RESULTS and the datasets README updated. TEST_RESULTS marks every
+live-tier number as v1's: **the live tier has not been run on v2.**
 
 ---
 

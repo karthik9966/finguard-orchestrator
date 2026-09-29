@@ -5,29 +5,32 @@ regulation cares about, and produces a report in which **every finding carries t
 on** — checkable by an examiner, and by construction unable to cite a rule it was not shown.
 
 ```
-                    ┌─ detection ── arithmetic. finds shapes, judges nothing.
-batch ── ingest ────┤                no candidates → $0.0000, the model is never built
+                    ┌─ graph → detection ── arithmetic. finds shapes, judges nothing.
+batch ── ingest ────┤                        no candidates → $0.0000, the model is never built
                     └─ per candidate: retrieve → ground → critique ⟲ → report → store
                                                   ▲            │
                                                   └─ a thin finding goes back for more law
 ```
 
-Two halves on opposite sides of the model. **Detection is arithmetic** — five windowed typology
-detectors that find shapes and call none of them suspicious. **Grounding is judgement** — the model is
+Two halves on opposite sides of the model. **Detection is arithmetic** — each batch becomes one
+directed money-flow graph, and nine typology detectors query it for shapes, calling none of them
+suspicious. **Grounding is judgement** — the model is
 shown one shape and the law that applies to it, and may conclude only what that law supports. A
 deterministic gate enforces the second half: a finding may cite only clauses that were actually
 retrieved, checked in Python *before* any model is asked its opinion.
 
 - **Jurisdiction:** US only — 31 USC §5324, 31 CFR 1010.311 / 1010.410 / 1020.210 / 1020.320, FFIEC
   manual + Appendix F, FINRA, FinCEN. 731 chunks, 20 sources.
-- **Typologies:** `structuring · fan_in · fan_out · cycle · scatter_gather`
+- **Typologies (v2):** `structuring · fan_in · fan_out · cycle · scatter_gather · gather_scatter ·
+  deposit_send · layered_fan · bipartite` — including multi-hop (layered funnels) and subgraph
+  structure (bipartite blocks), each finding drawn as its matched graph in the cockpit.
 - **Data:** synthetic throughout — SAML-D, re-domiciled as a US institution.
 
 ## Documentation
 
 | | |
 |---|---|
-| [docs/DESIGN.md](docs/DESIGN.md) | as built, and the four deviations from the design set |
+| [docs/DESIGN.md](docs/DESIGN.md) | as built, and every deviation from the design set |
 | [docs/HLD.md](docs/HLD.md) | zones, the three journeys, privacy, observability |
 | [docs/LLD.md](docs/LLD.md) | node by node, the contracts, the error taxonomy |
 | [docs/CONSTANTS.md](docs/CONSTANTS.md) | every tunable number beside the measurement that chose it |
@@ -173,29 +176,31 @@ is a no-op, and a run with Langfuse unreachable completes normally.
 ## Tests and evaluation
 
 ```bash
-uv run pytest tests/ -q --cov                        # 489 tests, free, no key, no network
-uv run python -m eval.run --tier deterministic       # ~30s, free
-uv run python -m eval.run --tier live --batches 1    # ~8 min, ~$0.45
+uv run pytest tests/ -q --cov                        # 539 tests, free, no key, no network
+uv run python -m eval.run --tier deterministic       # ~60s, free
+uv run python -m eval.run --tier live --batches 1    # paid; not yet re-run for v2
 ```
 
 The suite needs no API key at all, and the PR gate **fails** if one is present — every test that would
 reach a model injects a stub, so a real call should fail loudly rather than quietly bill.
 
-Headline numbers, with the failures included:
+Headline numbers, with the failures included. Deterministic rows are v2; the live-tier rows are **v1's
+and have not been re-run on v2**:
 
 | | target | measured |
 |---|---|---|
-| recall, detector level | ≥ 0.90 | **0.827** ✗ — the whole gap is `structuring` at 5/15, diagnosed |
-| rules-only baseline | — | 0.907 recall, at **77.6%** of the batch alerted vs our 19.1% |
-| faithfulness | 1.00 hard gate | **1.00** (110 checks, 0 violations) |
-| context precision hit@1 | ≥ 0.90 | **0.60** ✗ (hit@3 0.80), up from 0.22 |
-| prompt injection resisted | 1.00 | **5/5** |
-| clean batch | 0 candidates, 0 calls | **$0.0000** |
-| branch coverage, audit path | ≥ 85% | **85.6%** |
+| recall, pattern level | ≥ 0.90 | **0.959** ✓ (v1 0.827) — structuring 15/15, was 5/15 |
+| recall, weakest pattern | ≥ 0.90 each | **5/6** ✗ scatter_gather, on the 6 whole held-out instances SAML-D has |
+| rules-only baseline | — | 1.000 recall, at **73.5%** of the batch alerted vs our 9.2% |
+| context precision hit@1 | ≥ 0.90 | **0.33** ✗ (hit@3 0.67) — the four v2 queries miss rank 1, characterised |
+| clean batch | 0 candidates, 0 calls | **0 candidates, $0.0000** |
+| branch coverage, audit path | ≥ 85% | **86.8%** |
+| faithfulness *(v1)* | 1.00 hard gate | 1.00 (110 checks, 0 violations) |
+| prompt injection resisted *(v1)* | 1.00 | 5/5 |
 
-[docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) has the diagnoses, the cost table, and the seven known
-gaps. The three failing metrics are left failing on purpose: a first baseline's job is to be true, and
-a threshold moved to fit the number it measures stops measuring anything.
+[docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) has the per-pattern table, the diagnoses and the known
+gaps. The failing metrics are left failing on purpose: the only data left to tune them on is the golden
+set, and a threshold moved to fit the number it measures stops measuring anything.
 
 ## Layout
 
@@ -204,14 +209,14 @@ src/
   config.py          Settings (env) + Config (config.yaml).  numbers never in code
   models.py          every contract: TransactionRecord, Candidate, RuleChunk, Finding, …
   ingestion/         corpus acquisition, tier-aware chunking, the vector store, batch ingestion
-  detection/         five typology detectors + the reconciler.  no model
+  detection/         the graph engine, nine typology detectors, the reconciler, evidence.  no model
   retrieval/         TierAwareRetriever, the cross-encoder
-  graph/             the five nodes, the graph, the run orchestrator, the three prompts
+  graph/             the six nodes, the graph, the run orchestrator, the three prompts
   store/            the results store: immutable reports, mutable statuses, append-only reviews
   api/ · ui/         FastAPI, and a Streamlit cockpit that is a client of it
   observability/     Langfuse, with redaction on the client
 eval/                golden datasets, the metric runners, the rules-only baseline
-tests/               489 tests
+tests/               539 tests
 ```
 
 Nothing under `src/` imports anything from `eval/` — that is what stops an evaluation fixture becoming
@@ -219,12 +224,14 @@ production behaviour.
 
 ## Caveats, stated rather than buried
 
-- **The synthetic data is synthetic.** SAML-D models laundering typologies, not US thresholds, which is
-  exactly why `structuring` recall is 5/15 on held-out data. See
-  [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md).
-- **The corpus has no cycle-specific red flag.** All 479 illustrative chunks, searched for
-  round-trip language: nothing. A cycle candidate grounds on obligations alone, which is correct
-  behaviour and a corpus gap.
+- **The synthetic data is synthetic.** SAML-D models laundering typologies, not US thresholds. PRD v2's
+  Option 1 selects the structuring and deposit-send instances that do hug $10,000, which is part of
+  why structuring recall went 5/15 → 15/15 — the question changed, and
+  [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) says so beside the number.
+- **Two patterns are measured on fewer than fifteen instances** — scatter_gather 6, gather_scatter 12 —
+  because that is every whole, held-out instance SAML-D contains.
+- **The corpus has no cycle-specific red flag, and no cash-specific deposit-then-wire one.** A cycle
+  candidate grounds on obligations alone, which is correct behaviour and a corpus gap.
 - **Neither CI workflow has been executed** — no runner here, and the nightly needs secrets.
 - **`docker compose` is configuration-validated, not launched** — no Docker daemon on the build
   machine.

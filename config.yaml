@@ -184,8 +184,8 @@ detection:
 # run that never finishes. None of them says what a pattern *is* -- that lives under detection.
 # ---------------------------------------------------------------------------------------------
 graph:
-  # Hops a layered traversal may walk from its root. Every SAML-D layered and stacked cluster is
-  # exactly 2 deep (measured over all 1,691 of their edges), so 3 leaves one hop of headroom.
+  # Hops a layered traversal may walk from its root. No SAML-D layered or stacked cluster is deeper
+  # than 2 (all 138 of them measured: 113 are 2 deep, 25 are 1), so 3 leaves one hop of headroom.
   max_traversal_depth: 3
   # Accounts one traversal level may hold before the walk stops widening. A funnel's layer is 4-10
   # accounts in SAML-D; a level of hundreds is a payment processor, not a funnel.
@@ -216,9 +216,9 @@ reasoning:
   schema_retries: 3
   llm_max_attempts: 3          # tenacity attempts on 429/5xx/timeout
   llm_timeout_seconds: 60
-  # Edges of the matched structure shown to the grounding model (PRD v2 §5.3). Every planted
-  # v2 cluster in the golden corpus has fewer than 30, so the cap bounds tokens on a pathological
-  # candidate without trimming a real one; beyond it the prompt says how many were left out.
+  # Edges of the matched structure shown to the grounding model (PRD v2 §5.3). The largest golden
+  # instance has 24 transactions, so the cap bounds tokens on a pathological candidate without
+  # trimming a real one; beyond it the prompt says how many were left out.
   evidence_edges_in_prompt: 30
   # There is deliberately **no candidate cap**. Measured on the June dev batch (500 messages,
   # 5 candidates), twice:

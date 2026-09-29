@@ -1,81 +1,109 @@
-# Test results
+# Test results — v2
 
 What the system scores, including what fails. Measured on the golden corpus, which is **not** the corpus
-the detectors were tuned on — see [TEST_DESIGN.md](TEST_DESIGN.md).
+the detectors were tuned on — and in v2, provably so: see [TEST_DESIGN.md](TEST_DESIGN.md).
 
 Reproduce:
 
 ```bash
-uv run pytest tests/ -q --cov --cov-report=term          # 489 tests, free
-uv run python -m eval.run --tier deterministic           # ~30s, free
-uv run python -m eval.run --tier live --batches 1        # ~8 min, ~$0.45
+uv run pytest tests/ -q --cov --cov-report=term          # 539 tests, free
+uv run python -m eval.run --tier deterministic           # ~60s, free
+uv run python -m eval.run --tier live --batches 1        # not yet re-run for v2 -- see below
 ```
+
+**Two kinds of number below.** Everything the deterministic tier measures was re-measured for v2 on
+2026-09-29. The live tier — faithfulness, triage, injection, narrative quality, cost — **has not been
+re-run since v1**; those rows are v1's figures, marked as such, and they are a claim about the v1 system
+until the v2 live run replaces them. v2 grounds more candidate shapes and shows the model a subgraph, so
+none of them can be assumed to carry over.
 
 ---
 
 ## Summary
 
-| KPI | target | measured | |
-|---|---|---|---|
-| Recall (detector level) | ≥ 0.90 | **0.827** | ✗ |
-| Recall (system reports it) | ≥ 0.90 | **0.667** | ✗ |
-| Faithfulness | 1.00 hard gate | **1.00** (110 checks, 0 violations) | ✓ |
-| Schema conformance | 100% | **100%** | ✓ |
-| Context precision (hit@1) | ≥ 0.90 | **0.60** (hit@3 0.80) | ✗ |
-| Triage: TPs ranked high/medium | ≥ 90% | **100%** | ✓ |
-| Prompt injection resisted | 1.00 | **5/5** | ✓ |
-| Narrative quality | ≥ 0.85 advisory | **1.00** | ✓ |
-| Clean batch | 0 candidates, 0 calls, $0.0000 | **all three** | ✓ |
-| Malformed inputs handled | 10/10 | **10/10** | ✓ |
-| Branch coverage (audit path) | ≥ 85% | **85.6%** | ✓ |
-| 10,000-message batch | detection inside 5 min | **seconds** | ✓ |
+| KPI | target | v2 measured | v1 | |
+|---|---|---|---|---|
+| Recall, pattern level | ≥ 0.90 | **0.959** (118/123) | 0.827 | ✓ |
+| Recall, weakest pattern | ≥ 0.90 each | **0.833** — scatter_gather 5/6 | — | ✗ |
+| Recall, named pattern | reported | **0.886** (109/123) | — | |
+| Alert volume (share of batch) | reported | **9.2%** (baseline 73.5%) | 19.1% | |
+| Context precision (hit@1) | ≥ 0.90 | **0.33** (hit@3 0.67) | 0.60 | ✗ |
+| Schema conformance | 100% | **100%** (26,786 objects) | 100% | ✓ |
+| Clean batch | 0 candidates, 0 calls, $0.0000 | **0 candidates** | all three | ✓ |
+| Malformed inputs handled | 10/10 | **10/10** | 10/10 | ✓ |
+| Graph-engine correctness | 100% hard gate | **19/19** in `test_graph_engine.py` | — | ✓ |
+| Branch coverage (audit path) | ≥ 85% | **86.8%** | 85.6% | ✓ |
+| 10,000-message batch | detection inside 5 min | **5.3 s**, 308 candidates | seconds, 304 | ✓ |
+| Faithfulness | 1.00 hard gate | *not re-run* | 1.00 | — |
+| Triage: TPs ranked high/medium | ≥ 90% | *not re-run* | 100% | — |
+| Prompt injection resisted | 1.00 | *not re-run* (system defence: 5/5 in Tier 3, stubbed) | 5/5 | — |
+| Narrative quality | ≥ 0.85 advisory | *not re-run* | 1.00 | — |
 
-Three metrics fail. They are left failing with named causes rather than tuned until green: a first
-baseline's job is to be true, and a threshold moved to fit the number it measures stops measuring
-anything.
+Two deterministic metrics fail. As in v1, they are left failing with named causes rather than tuned until
+green — and here the reason is sharper than principle: the only data left to tune them on is the golden
+set.
 
 ## Recall, and the comparator that makes it mean something
 
 ```
-ours      0.827 recall  at  19.1% of the batch alerted
-baseline  0.907 recall  at  77.6% of the batch alerted
+ours      0.959 recall  at   9.2% of the batch alerted
+baseline  1.000 recall  at  73.5% of the batch alerted
 ```
 
-The rules-only baseline beats us on recall by alerting on four times as much. That is the trade the whole
-system exists to make, and reporting recall without the volume beside it would be reporting half of it.
+The rules-only baseline catches everything by alerting on three-quarters of the ledger. The trade is
+the one the system exists to make, and v2 made it better on both axes: recall up from 0.827, volume down
+from 19.1%.
 
-| pattern | ours | baseline |
+| pattern | pattern level | named | baseline | note |
+|---|---|---|---|---|
+| structuring | **15/15** | 15/15 | 15/15 | v1: 5/15 |
+| fan_in | 14/15 | 13/15 | 15/15 | |
+| fan_out | 14/15 | 14/15 | 15/15 | |
+| cycle | 15/15 | 15/15 | 15/15 | |
+| scatter_gather | **5/6** | 5/6 | 6/6 | supply-limited: 6 is every whole held-out instance SAML-D has |
+| gather_scatter | 11/12 | **7/12** | 12/12 | supply-limited: 12 |
+| deposit_send | 15/15 | 13/15 | 15/15 | |
+| layered_fan | 14/15 | 12/15 | 15/15 | |
+| bipartite | 15/15 | 15/15 | 15/15 | |
+
+**Structuring, the v1 headline gap, is closed — by two changes, neither of them a threshold.** v1
+diagnosed its 5/15 as a premise mismatch: SAML-D's "Structuring" label means *split into small amounts*,
+with no threshold in it, while §5324 means *kept under* one. PRD v2's Option 1 resolves that on the data
+side — gold instances are the clusters that do hug $10,000 — and a second finding resolved it on the
+detector side: every SAML-D Structuring cluster is many parties paying **one receiving account**, and the
+detector only grouped by originator. It now groups by both. Option 1 changes what is being measured, so
+15/15 and v1's 5/15 are not the same question; the v1 figure stays in the table for that reason.
+
+**The per-pattern gate fails on one miss in six.** scatter_gather's denominator is six because that is
+every whole, held-out scatter-gather SAML-D contains; a single miss is 16.7 points. The miss
+(`LP-scatter_gather-002`) is one to investigate, but no threshold should move to recover a sixth of a
+six-instance set. Read this row as "5 of 6", not as "83%".
+
+**Named recall is where the v2 detectors are weak, and it is honest to say which.** gather_scatter is
+found by name 7 times in 12; the other four are covered by `fan_in` or `fan_out`, reporting half the
+shape. The dev sweep only reached 3/5 by name, and the curve is in [CONSTANTS.md](CONSTANTS.md) —
+SAML-D hubs do not conserve money tightly (out/in from 0.80 to 4.06), which is what the detector's
+conservation band leans on. deposit_send's two named misses are covered by other detectors, as are two of layered_fan's three;
+the third layered instance (`LP-layered_fan-014`) is missed outright.
+
+## Context precision: 0.33 hit@1, 0.67 hit@3
+
+The five v1 queries score exactly as in v1 (3/5 hit@1; CQ-002 and CQ-003 characterised in the v1
+section below). The drop is the four v2 queries, **0/4 at rank 1**:
+
+| query | correct at | what outranked it |
 |---|---|---|
-| cycle | 15/15 | 15/15 |
-| fan_in | 14/15 | 15/15 |
-| fan_out | 14/15 | 15/15 |
-| scatter_gather | 14/15 | 15/15 |
-| **structuring** | **5/15** | 8/15 |
+| CQ-007 gather_scatter | absent from top 5 | both distractors — each describes *half* the shape (collect-and-funnel; many beneficiaries from one company) |
+| CQ-008 deposit_send | rank 2 | a FINRA red flag; the corpus has **no cash-specific** deposit-then-wire flag, so the correct answer is the checks-and-money-orders version |
+| CQ-009 layered_fan | rank 2 | Other Transactions ¶ 2 — CQ-003's fan-in answer |
+| CQ-010 bipartite | absent from top 5 | its distractor ¶ 15 (one person, several accounts) at rank 1 |
 
-**The whole gap is one detector, and it is diagnosed.** The 15 planted structuring clusters have amounts
-spanning **$1,035–$5,811, median $2,323**, against bands of `[8000, 10000)` and `[2400, 3000)` with
-`min_count: 3`. The $10,000 band catches nothing — no planted amount reaches $8,000 — and the $2,400 band
-catches only the one or two transactions per cluster that land inside it, below the minimum.
+Characterised and not fixed, for v1's reason: rewording a template until its own measuring record passes
+tunes the instrument to the reading. CQ-007 is the instructive one — a query describing a pass-through
+retrieves each half of a pass-through, which suggests the behaviour-register template for a two-sided
+shape needs to say what connects the halves.
 
-That is a **mismatch of premises rather than obviously a bug.** Structuring under 31 USC §5324 means
-amounts *chosen* to stay under a reporting threshold, so a cluster spread across $1,035–$5,811 is not
-structuring however suspicious it is. SAML-D's `Structuring` and `Smurfing` labels mean only "split into
-many small amounts" and model no threshold at all.
-
-What *is* a real gap is what falls between the detectors: **one account making many modest deposits over
-a fortnight is caught by neither** — structuring wants the amounts banded near a threshold, fan-in wants
-four or more *distinct* senders. Three options, none taken:
-
-1. Give structuring an aggregate rule — *n* transfers totalling over a threshold inside the window,
-   regardless of band. Catches these, and will cost precision on ordinary business.
-2. Widen `band_fraction`. Cheapest and worst: Phase 3 already measured that no band width separates
-   structuring from clean traffic (clean median $6,220, 73% under $10,000).
-3. Report recall per pattern with this caveat and leave the detector matching the statute.
-
-**System recall (0.667) is the same root cause**, measured on one batch where both misses are structuring.
-Worth stating plainly: on a single batch of nine instances each miss is 11 points, and two live runs of
-the *same* batch differed — 0.778 then 0.667 — on model non-determinism at temperature 0. A recall figure
-over one batch is a weak claim, which is why the batch cap is reported beside the number.
+## The v1 sections below are v1's measurements
 
 ## Faithfulness: 1.00, and it found a defect getting there
 
@@ -173,15 +201,18 @@ changes that.
 
 ## Known gaps
 
-1. **Structuring recall**, above. The decision is deferred with three options and the measurements behind
-   each.
-2. **The corpus has no cycle-specific red flag.** Searching all 479 illustrative chunks for
-   circular / round-trip / returns-to-origin language returns nothing, so a cycle candidate grounds on
-   obligations alone. CQ-006 expects exactly that and is excluded from the precision denominator with that
-   reason stated. This is a corpus gap to close, not a scoring convenience.
-3. **Context precision below target**, with both misses characterised above.
-4. **Neither CI workflow has run.** No runner here; the nightly needs secrets.
-5. **`docker compose` is configuration-validated but not launched** — no Docker daemon on this machine.
-6. **The cockpit's file-uploader widget is the one path `AppTest` cannot reach.** Everything either side
-   of it is tested, and submit-through-the-client is verified against a live server.
-7. **System recall is measured on one batch.** The nightly job defaults to more.
+1. **The live tier has not been run on v2.** Faithfulness, triage, injection resistance, narrative
+   quality and per-candidate cost are v1's numbers. It needs a key and costs money — more than v1's
+   ~$0.45 per batch, because a golden batch is now 2,400 messages rather than 1,200.
+2. **Per-pattern recall below 0.90 for scatter_gather** (5/6), on a denominator SAML-D cannot enlarge.
+3. **Context precision** 0.33 hit@1, with all four v2 misses characterised above.
+4. **gather_scatter named recall** 7/12 — the detector is the weakest of the nine by name.
+5. **Benign lookalikes are never executed.** 24 authored records, schema- and reasoning-checked, but no
+   runner grades their risk band; the triage metric grades true positives only.
+6. **The corpus has no cycle-specific red flag, and no cash-specific deposit-then-wire flag.** CQ-006
+   expects no indicator; CQ-008's correct answer names checks and money orders.
+7. **`deposit_send.amount_tolerance` was sized on all of SAML-D**, before the dev/eval partition existed,
+   so its evidence touched golden clusters. The dev-only sweep that followed did not move it.
+8. **Neither CI workflow has run.** No runner here; the nightly needs secrets.
+9. **`docker compose` is configuration-validated but not launched** — no Docker daemon on this machine.
+10. **The cockpit's file-uploader widget is the one path `AppTest` cannot reach.**
