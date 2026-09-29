@@ -411,8 +411,12 @@ class CriticNode:
             candidate=candidate,
             risk_level=draft.risk_level,
             narrative=draft.narrative,
-            applicable_regulations=self._citations(state, draft.cited_obligation_ids, "obligations"),
-            red_flag_indicators=self._citations(state, draft.matched_indicator_ids, "indicators"),
+            applicable_regulations=self._citations(
+                state, draft.cited_obligation_ids, "obligations", draft.narrative
+            ),
+            red_flag_indicators=self._citations(
+                state, draft.matched_indicator_ids, "indicators", draft.narrative
+            ),
             confidence=score,
             status="pending_review",
             review_notes=notes,
@@ -437,11 +441,11 @@ class CriticNode:
                      f"pattern across {len(candidate.member_txn_refs)} transactions."
             ),
             applicable_regulations=(
-                self._citations(state, draft.cited_obligation_ids, "obligations")
+                self._citations(state, draft.cited_obligation_ids, "obligations", draft.narrative)
                 if draft is not None else []
             ),
             red_flag_indicators=(
-                self._citations(state, draft.matched_indicator_ids, "indicators")
+                self._citations(state, draft.matched_indicator_ids, "indicators", draft.narrative)
                 if draft is not None else []
             ),
             confidence=score,
@@ -470,15 +474,27 @@ class CriticNode:
         }
 
     @staticmethod
-    def _citations(state: AgentState, ids: list[str], half: str) -> list[Citation]:
+    def _citations(
+        state: AgentState, ids: list[str], half: str, narrative: str = ""
+    ) -> list[Citation]:
         """Resolve cited ids back to the chunks the model was actually shown.
 
-        Not re-searched. The bundle is in hand, so a citation in a report is the same text that
-        was in the prompt -- which is the only version of a citation an auditor can check.
+        Not re-searched. The bundle is in hand, so a citation in a report is the same text that was
+        in the prompt -- which is the only version of a citation an auditor can check.
+
+        **Ids named in the narrative count as cited**, even when the model left them out of the
+        structured list. Phase 8's faithfulness gate found this at 0.9811: two findings whose prose
+        referenced a clause their own citation list omitted, so the citations drawer could not
+        resolve what the narrative pointed at. The clause was real and had been retrieved -- the
+        faithfulness gate is right that nothing was fabricated -- but a report that cites something
+        it does not list is internally inconsistent, and the honest repair is to list what the model
+        used rather than to edit its prose.
         """
         retrieval = state.get("retrieval") or RetrievalResult()
         chunks = {chunk.chunk_id: chunk for chunk in getattr(retrieval, half)}
-        return [Citation.from_chunk(chunks[cited]) for cited in ids if cited in chunks]
+        named = [cited for cited in CHUNK_ID.findall(narrative or "") if cited in chunks]
+        ordered = list(dict.fromkeys([*ids, *named]))
+        return [Citation.from_chunk(chunks[cited]) for cited in ordered if cited in chunks]
 
     @staticmethod
     def _evidence_hint(candidate: Candidate) -> str:

@@ -44,8 +44,14 @@ def chunk(chunk_id: str, *, authority="binding", tier="regulation", section="§ 
     )
 
 
-OBLIGATION = chunk("oblig-1")
-INDICATOR = chunk("indic-1", authority="illustrative", tier="guidance", section="Appendix F 3")
+# Real-shaped chunk ids -- `source_id:hash16`, as the store mints them. Not cosmetic: `CHUNK_ID`
+# matches that shape, so a fixture with an invented id would make every test that involves an id in
+# prose pass for the wrong reason.
+OBLIGATION = chunk("31cfr1020.320:d000653bf144c90b")
+INDICATOR = chunk(
+    "ffiec-appendix-f:91b4dc940b784a98",
+    authority="illustrative", tier="guidance", section="Appendix F 3",
+)
 BUNDLE = RetrievalResult(obligations=[OBLIGATION], indicators=[INDICATOR])
 
 
@@ -411,7 +417,7 @@ def test_every_flagged_transaction_traces_to_a_finding():
 def test_the_source_list_is_deduplicated_across_findings():
     report = report_from(accepted(candidate("a")), accepted(candidate("b")))
     ids = [c.chunk_id for c in report.source_document_refs]
-    assert sorted(ids) == [INDICATOR.chunk_id, OBLIGATION.chunk_id]
+    assert sorted(ids) == sorted([INDICATOR.chunk_id, OBLIGATION.chunk_id])
 
 
 def test_quarantined_messages_are_stated_not_buried():
@@ -586,3 +592,41 @@ def test_tracing_reports_itself_as_off_without_a_key(monkeypatch):
 
     tracing.reset()
     reset_caches()
+
+
+def test_a_clause_named_only_in_the_narrative_is_still_listed_as_a_citation():
+    """Phase 8's faithfulness gate found this at 0.9811 on a live run: two findings whose prose
+    referenced a clause their own citation list omitted, so §6.4's drawer could not resolve what the
+    narrative pointed at. Nothing was fabricated -- the clause was retrieved -- but a report that
+    cites something it does not list is internally inconsistent."""
+    target = candidate("a")
+    draft = draft_for(
+        target,
+        # The model mentions the obligation in prose but leaves it out of the structured field.
+        cited_obligation_ids=[],
+        matched_indicator_ids=[],
+        narrative=f"The duty in [{OBLIGATION.chunk_id}] applies, illustrated by "
+                  f"[{INDICATOR.chunk_id}].",
+    )
+    update = nodes.CriticNode(model_factory=lambda: StubModel(Critique(score=0.95)))(
+        state_with(target, retrieval=BUNDLE, draft_finding=draft)
+    )
+    (finding,) = update["findings"]
+    assert [c.chunk_id for c in finding.applicable_regulations] == [OBLIGATION.chunk_id]
+    assert [c.chunk_id for c in finding.red_flag_indicators] == [INDICATOR.chunk_id]
+
+
+def test_a_clause_named_in_the_narrative_but_never_retrieved_is_still_a_veto():
+    """The repair above must not become a way in. An id that was not in the bundle is a fabrication
+    whether it appears in the prose or in the structured field."""
+    target = candidate("a")
+    draft = draft_for(
+        target, cited_obligation_ids=[],
+        narrative="The duty in [31cfr9999.999:0123456789abcdef] applies.",
+    )
+    model = StubModel(Critique(score=1.0))
+    update = nodes.CriticNode(model_factory=lambda: model)(
+        state_with(target, retrieval=BUNDLE, draft_finding=draft)
+    )
+    assert model.calls == [], "the gate runs before the model"
+    assert update["confidence_score"] == 0.0

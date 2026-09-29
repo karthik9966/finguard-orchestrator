@@ -1,0 +1,114 @@
+# Gate 2 of Evaluation Design §6: the comprehensive ML evaluation, on a schedule.
+#
+# Costs real model calls, which is why it is nightly rather than per-push. It runs the Tier-2 metrics
+# against the golden datasets with a live model -- system recall, the deterministic faithfulness gate,
+# triage, prompt-injection resistance and the advisory narrative judge -- and records every run to
+# Langfuse so the scores are trended rather than merely pass/fail.
+#
+# **How it gets a built `rule_chunks`, which the migration plan asked to be decided and stated:
+# it rebuilds, and caches the result.** The three alternatives and why not:
+#
+#   * *Commit the collection.* 74 MB of Chroma SQLite in git, growing with every corpus refresh, in
+#     every clone forever. It is a build artefact of `finguard-store`, not source.
+#   * *Restore a cached artifact only.* Then a cache miss is a failed run rather than a slower one,
+#     and the first run after any corpus change fails for a reason that looks like a regression.
+#   * *Rebuild every night.* ~10 minutes of embedding for a corpus that changes when a regulator
+#     publishes, which is not nightly.
+#
+# So: cache keyed on the chunk manifest and the embedding model, rebuild on a miss. A corpus change
+# invalidates the key by construction, and an unchanged corpus costs a cache restore.
+#
+# SAML-D arrives in the same download and the same cache. Neither is in the PR gate.
+
+name: Nightly evaluation
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      batches:
+        description: "Golden batches to audit (0 = all 11; each is roughly $0.45)"
+        default: "2"
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LANGFUSE_TRACING: "true"
+      LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+      LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+      LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+      LANGFUSE_ENVIRONMENT: ci
+      CLIENT_TIER: nightly
+      RESULTS_DB_URL: sqlite:///./results.db
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: uv sync --frozen
+
+      # --- the corpora, cached on what actually determines them --------------------------
+      # One step, because `finguard-download` fetches both the regulatory sources and SAML-D in a
+      # single manifest-driven pass -- there is no flag to take one without the other, and inventing
+      # one for the sake of two cache entries would be the workflow shaping the tool.
+      - name: Cache the raw corpora
+        id: corpora
+        uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: corpora-${{ hashFiles('data/MANIFEST.json') }}
+
+      - name: Fetch the corpora
+        if: steps.corpora.outputs.cache-hit != 'true'
+        run: uv run finguard-download
+
+      - name: Cache the built vector store
+        id: chroma
+        uses: actions/cache@v4
+        with:
+          path: chroma_db
+          # The embedding model is part of the key: a collection built at one model's dimension
+          # cannot answer a query embedded at another's, and the failure is silent.
+          key: chroma-${{ hashFiles('data/MANIFEST.json', 'config.yaml') }}-minilm
+
+      - name: Build rule_chunks
+        if: steps.chroma.outputs.cache-hit != 'true'
+        run: |
+          uv run finguard-chunk --rules
+          uv run finguard-store --rules
+
+      - name: Generate the golden corpus
+        run: |
+          uv run finguard-ledger --profile dev
+          uv run finguard-ledger --profile eval
+
+      # --- the gates --------------------------------------------------------------------
+      - name: Tier 1 -- the full suite with the data in place
+        run: uv run pytest tests/ -q --cov --cov-report=term
+
+      - name: Tier 1 -- deterministic metrics against the golden datasets
+        run: uv run python -m eval.run --tier deterministic --json tier1.json
+
+      - name: Tier 2 -- the live evaluation
+        run: |
+          uv run python -m eval.run --tier live \
+            --batches ${{ github.event.inputs.batches || 2 }} --json tier2.json
+
+      # Uploaded whether or not the gates passed: a failing run's numbers are the ones worth reading,
+      # and `if: always()` is what makes a regression diagnosable instead of merely reported.
+      - name: Keep the numbers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ github.run_number }}
+          path: |
+            tier1.json
+            tier2.json
