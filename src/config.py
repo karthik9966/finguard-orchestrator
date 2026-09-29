@@ -36,16 +36,32 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # `graph/graph.py` for the LangSmith variables; those are gone, the need is not.
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 
-PatternType = Literal["structuring", "fan_in", "fan_out", "cycle", "scatter_gather"]
+PatternType = Literal[
+    "structuring",
+    "fan_in",
+    "fan_out",
+    "cycle",
+    "scatter_gather",
+    "gather_scatter",
+    "deposit_send",
+    "layered_fan",
+    "bipartite",
+]
 
-# The five in-scope typologies, in the order the PRD lists them. Exported so detectors, the
-# obligation map and the eval runners cannot drift apart on spelling.
+# The nine in-scope typologies, in the order PRD v2 §1 lists them. Exported so detectors, the
+# obligation map and the eval runners cannot drift apart on spelling. `layered_fan` covers both
+# directions of SAML-D's Layered_Fan_In/Out and `bipartite` covers plain and stacked, per the LLD v2
+# Literal: one value per shape family, with direction and stacking carried in the attributes.
 PATTERN_TYPES: tuple[PatternType, ...] = (
     "structuring",
     "fan_in",
     "fan_out",
     "cycle",
     "scatter_gather",
+    "gather_scatter",
+    "deposit_send",
+    "layered_fan",
+    "bipartite",
 )
 
 
@@ -231,6 +247,44 @@ class ScatterGatherConfig(BaseModel):
     min_fan: int = Field(gt=1)
 
 
+class GatherScatterConfig(BaseModel):
+    min_in: int = Field(gt=1)
+    min_out: int = Field(gt=1)
+    window_days: int = Field(gt=0)
+    # total out / total in. A hub that fills then empties conserves the money; one that keeps it
+    # or pays out from elsewhere does not.
+    min_conservation: float = Field(gt=0.0)
+    max_conservation: float = Field(gt=0.0)
+
+    @model_validator(mode="after")
+    def band_is_ordered(self) -> GatherScatterConfig:
+        if self.min_conservation >= self.max_conservation:
+            raise ValueError("gather_scatter.min_conservation must be below max_conservation")
+        return self
+
+
+class DepositSendConfig(BaseModel):
+    window_hours: float = Field(gt=0)
+    # |sent / deposited - 1|. The discriminator: timing alone fires on most depositors.
+    amount_tolerance: float = Field(gt=0.0, lt=1.0)
+    send_kinds: list[str] = Field(min_length=1)
+    min_pairs: int = Field(ge=1)
+
+
+class LayeredFanConfig(BaseModel):
+    min_branches: int = Field(gt=1)
+    min_leaves_per_branch: int = Field(gt=1)
+    min_total_leaves: int = Field(gt=1)
+    window_days: int = Field(gt=0)
+
+
+class BipartiteConfig(BaseModel):
+    min_src: int = Field(gt=1)
+    min_dst: int = Field(gt=1)
+    min_density: float = Field(gt=0.0, le=1.0)
+    window_days: int = Field(gt=0)
+
+
 class ConfidenceWeights(BaseModel):
     tightness: float
     member_count: float
@@ -255,6 +309,10 @@ class DetectionConfig(BaseModel):
     fan_out: FanOutConfig
     cycle: CycleConfig
     scatter_gather: ScatterGatherConfig
+    gather_scatter: GatherScatterConfig
+    deposit_send: DepositSendConfig
+    layered_fan: LayeredFanConfig
+    bipartite: BipartiteConfig
     confidence_weights: ConfidenceWeights
     precedence_order: list[PatternType]
 

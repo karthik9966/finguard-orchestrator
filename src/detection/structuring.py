@@ -3,6 +3,14 @@
 Group by originator; inside window W, at least `min_count` transactions each sitting in
 `[T - band, T)` for T in the monitored thresholds, with the group totalling at least T.
 
+**And by beneficiary (v2).** SAML-D's Structuring clusters are all receiver-anchored: ten parties
+each paying one account once (measured: every one of 1,870 rows has a distinct sender per month,
+and the 224 clusters hang off receivers). Grouping by originator alone could never see one, so
+they were counted as "found" only because fan-in happened to cover them. An account taking several
+just-under-threshold deposits from different people is the FFIEC red flag for structuring through
+others, and §5324 reaches whoever *causes* the splitting -- so both sides are grouped, the
+originator first, and `side` records which one a candidate hangs off.
+
 The band is a **fraction** of T, not an absolute. LLD §8 names one absolute band, which cannot
 serve both thresholds: an absolute 2000 makes the $3,000 band [1000, 3000) and catches most
 ordinary payments. 0.2 gives [8000, 10000) and [2400, 3000). Deviation recorded in config.yaml.
@@ -19,6 +27,11 @@ from src.detection import confidence
 from src.detection.base import BaseDetector, register
 from src.detection.graph_engine import BatchGraph
 from src.models import Candidate
+
+
+# Originator first: a run one party split is the plainer reading, and `claimed` stops the same
+# transactions being reported again from the receiving side.
+SIDES = (("originator", "sender_account"), ("beneficiary", "receiver_account"))
 
 
 class StructuringDetector(BaseDetector):
@@ -38,39 +51,41 @@ class StructuringDetector(BaseDetector):
             in_band = batch.frame[
                 (batch.frame.amount >= floor) & (batch.frame.amount < threshold)
             ]
-            for account, rows in in_band.groupby("sender_account"):
-                if len(rows) < rules.min_count:
-                    continue
-                for window_rows in self._windows(rows, window, rules.min_count):
-                    refs = batch.refs(window_rows)
-                    # The larger threshold is checked first; a group already reported under
-                    # $10,000 is not reported again under $3,000.
-                    if claimed.intersection(refs):
+            for side, column in SIDES:
+                for account, rows in in_band.groupby(column):
+                    if len(rows) < rules.min_count:
                         continue
-                    total = sum(batch.amounts(refs), Decimal(0))
-                    if total < Decimal(threshold) * Decimal(str(rules.min_aggregate_multiple)):
-                        continue
+                    for window_rows in self._windows(rows, window, rules.min_count):
+                        refs = batch.refs(window_rows)
+                        # The larger threshold is checked first; a group already reported under
+                        # $10,000 is not reported again under $3,000.
+                        if claimed.intersection(refs):
+                            continue
+                        total = sum(batch.amounts(refs), Decimal(0))
+                        if total < Decimal(threshold) * Decimal(str(rules.min_aggregate_multiple)):
+                            continue
 
-                    amounts = batch.amounts(refs)
-                    found.append(
-                        self.candidate(
-                            anchor=str(account),
-                            refs=refs,
-                            confidence=confidence.score(
-                                amounts=amounts,
-                                timestamps=list(window_rows.timestamp),
-                                minimum_members=rules.min_count,
-                                band_amounts=amounts,  # every member is in-band by construction
-                                threshold=Decimal(threshold),
-                            ),
-                            threshold=threshold,
-                            band=[float(floor), float(threshold)],
-                            total=float(total),
-                            count=len(refs),
-                            window_days=self.window_days,
+                        amounts = batch.amounts(refs)
+                        found.append(
+                            self.candidate(
+                                anchor=str(account),
+                                refs=refs,
+                                confidence=confidence.score(
+                                    amounts=amounts,
+                                    timestamps=list(window_rows.timestamp),
+                                    minimum_members=rules.min_count,
+                                    band_amounts=amounts,  # every member is in-band by construction
+                                    threshold=Decimal(threshold),
+                                ),
+                                threshold=threshold,
+                                side=side,
+                                band=[float(floor), float(threshold)],
+                                total=float(total),
+                                count=len(refs),
+                                window_days=self.window_days,
+                            )
                         )
-                    )
-                    claimed.update(refs)
+                        claimed.update(refs)
         return found
 
     @staticmethod

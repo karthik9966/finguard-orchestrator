@@ -1,7 +1,7 @@
 """The detector interface and its registry (LLD §2.4).
 
 A registry rather than a hardcoded list so `precedence_order` in config.yaml is the single place
-that knows about all five typologies. A detector added without an entry there fails at startup
+that knows about all nine typologies. A detector added without an entry there fails at startup
 rather than being silently reconciled last.
 """
 
@@ -76,6 +76,10 @@ def detect_all(
     from src.detection import fan_out as _fan_out  # noqa: F401
     from src.detection import cycle as _cycle  # noqa: F401
     from src.detection import scatter_gather as _scatter_gather  # noqa: F401
+    from src.detection import gather_scatter as _gather_scatter  # noqa: F401
+    from src.detection import deposit_send as _deposit_send  # noqa: F401
+    from src.detection import layered_fan as _layered_fan  # noqa: F401
+    from src.detection import bipartite as _bipartite  # noqa: F401
     from src.detection.reconciler import CandidateReconciler
 
     if not isinstance(batch, BatchGraph):
@@ -90,4 +94,10 @@ def detect_all(
             raise RuntimeError(f"precedence_order names {pattern!r}, which no detector registers")
         found.extend(detector.detect(batch))
 
-    return CandidateReconciler().reconcile(found) if reconcile else found
+    kept = CandidateReconciler().reconcile(found) if reconcile else found
+    # Evidence is attached after reconciliation, to the survivors only, and by the engine rather
+    # than by each detector -- so every finding's structure is drawn the same way (LLD v2 §3.1).
+    return [
+        candidate.model_copy(update={"subgraph": batch.subgraph(candidate.member_txn_refs)})
+        for candidate in kept
+    ]

@@ -60,6 +60,22 @@ OBLIGATION_TEMPLATES: dict[PatternType, str] = {
         "requirement to report funds split across intermediaries and recombined into a single "
         "account"
     ),
+    "gather_scatter": (
+        "duty to scrutinise an account that collects funds from many sources and promptly "
+        "disburses them to many beneficiaries"
+    ),
+    "deposit_send": (
+        "obligation to report currency deposits followed promptly by a funds transfer of the same "
+        "value out of the account"
+    ),
+    "layered_fan": (
+        "obligation to identify funds layered through tiers of intermediary accounts that collect "
+        "into or disperse from one account"
+    ),
+    "bipartite": (
+        "duty to monitor a group of accounts repeatedly paying the same group of beneficiaries "
+        "with no apparent relationship"
+    ),
 }
 
 # The *behaviour* a pattern looks like, written in the register the red flags are written in. Each one
@@ -87,6 +103,22 @@ INDICATOR_TEMPLATES: dict[PatternType, str] = {
     "scatter_gather": (
         "customer deposits funds into several accounts in small amounts which are subsequently "
         "consolidated into one account and transferred out"
+    ),
+    "gather_scatter": (
+        "funds from many unrelated parties are received into one account and quickly transferred "
+        "out to many other beneficiaries, the account used as a pass-through"
+    ),
+    "deposit_send": (
+        "customer makes currency deposits and the funds are promptly wired or transferred out, "
+        "often to another jurisdiction, in similar amounts"
+    ),
+    "layered_fan": (
+        "funds are moved through multiple layers of accounts, collected by intermediaries and "
+        "funnelled to one account, or dispersed through intermediaries to many"
+    ),
+    "bipartite": (
+        "several accounts send funds transfers to the same set of beneficiaries, with no apparent "
+        "business relationship between the parties"
     ),
 }
 

@@ -85,5 +85,155 @@
       {"source_id": "ffiec-appendix-f", "section_ref": "Automated Clearing House Transactions ¶ 3", "why_wrong": "layering, but ACH-specific and not circular"},
       {"source_id": "finra-rn-19-18", "section_ref": "part 20 of 28", "why_wrong": "funds returned to a *different* institution than they came from -- the retriever's current first result, and not a round trip"}
     ]
+  },
+  {
+    "id": "CQ-007",
+    "pattern_type": "gather_scatter",
+    "why_hard": "Three red flags each describe part of the shape. 'Collect and funnel to a small number of beneficiaries' is the gather half alone, and 'a large number of beneficiaries receiving transfers from one company' is the scatter half alone. Only ¶ 11 describes funds arriving from many sources and leaving again almost immediately -- the pass-through that makes a hub a gather-scatter rather than a busy collector or a busy payer.",
+    "candidate": {
+      "pattern_type": "gather_scatter",
+      "attributes": {
+        "anchor": "7340215566",
+        "hub": "7340215566",
+        "distinct_senders": 6,
+        "distinct_recipients": 5,
+        "total_in": 41200.0,
+        "total_out": 39850.0,
+        "conservation": 0.9672,
+        "window_days": 21
+      }
+    },
+    "correct_indicator": {
+      "source_id": "ffiec-appendix-f",
+      "section_ref": "Efforts to Avoid Reporting or Recordkeeping Requirement ¶ 11"
+    },
+    "distractors": [
+      {
+        "source_id": "ffiec-appendix-f",
+        "section_ref": "Activity Inconsistent With the Customer’s Business ¶ 9",
+        "why_wrong": "collection into a few beneficiaries -- the gather half only; says nothing of the funds leaving again"
+      },
+      {
+        "source_id": "ffiec-appendix-f",
+        "section_ref": "Shell Company Activity ¶ 5",
+        "why_wrong": "many beneficiaries from one company -- the scatter half only, and a shell-company premise this candidate has no evidence of"
+      }
+    ]
+  },
+  {
+    "id": "CQ-008",
+    "pattern_type": "deposit_send",
+    "why_hard": "**The corpus has no cash-specific version of this red flag.** The nearest is ¶ 11 -- deposits followed almost immediately by a wire to another city or country -- which names checks and money orders rather than currency but describes exactly the deposit-then-send movement. The distractors both pair currency with a later transfer, which is lexically closer, but one is about foreign nonbank institutions shipping bulk currency and the other about foreign-exchange conversions, neither of which a customer's cash deposit is.",
+    "candidate": {
+      "pattern_type": "deposit_send",
+      "attributes": {
+        "anchor": "4418092337",
+        "pairs": 1,
+        "total_deposited": 9420.0,
+        "total_sent": 9455.5,
+        "max_gap_hours": 31.5,
+        "cross_border": true,
+        "cash_intensive": true,
+        "window_hours": 72
+      }
+    },
+    "correct_indicator": {
+      "source_id": "ffiec-appendix-f",
+      "section_ref": "Efforts to Avoid Reporting or Recordkeeping Requirement ¶ 11"
+    },
+    "distractors": [
+      {
+        "source_id": "ffiec-appendix-f",
+        "section_ref": "Bulk Currency Shipments ¶ 6",
+        "why_wrong": "currency then wire, but deposited by foreign nonbank financial institutions into their own accounts -- an institution-level typology, not a customer's deposit"
+      },
+      {
+        "source_id": "ffiec-appendix-f",
+        "section_ref": "Other Transactions That Appear Unusual or Suspicious ¶ 1",
+        "why_wrong": "a transfer following a foreign-exchange transaction; this candidate has a cash deposit and no currency exchange"
+      }
+    ]
+  },
+  {
+    "id": "CQ-009",
+    "pattern_type": "layered_fan",
+    "why_hard": "The literal word 'layers' is a trap: 'multiple layers of TPSPs' is about third-party payment processors stacked into an ACH chain, not accounts collecting funds in tiers. ¶ 6 is the closer call -- deposits into several accounts consolidated into a master account -- but it describes one customer splitting its own deposits below $3,000, the structuring register. ¶ 9 is many accounts used to collect and funnel to a few beneficiaries, which is the multi-party, multi-account funnel a layered fan-in is.",
+    "candidate": {
+      "pattern_type": "layered_fan",
+      "attributes": {
+        "anchor": "2290447781",
+        "direction": "in",
+        "layers": 2,
+        "collectors": [
+          "5100392281",
+          "6623019455",
+          "8810274465"
+        ],
+        "branch_count": 3,
+        "leaf_count": 9,
+        "total": 88420.0,
+        "window_days": 28
+      }
+    },
+    "correct_indicator": {
+      "source_id": "ffiec-appendix-f",
+      "section_ref": "Activity Inconsistent With the Customer’s Business ¶ 9"
+    },
+    "distractors": [
+      {
+        "source_id": "ffiec-appendix-f",
+        "section_ref": "Automated Clearing House Transactions ¶ 3",
+        "why_wrong": "'layers' of third-party payment processors, not tiers of collecting accounts -- shares the word and nothing else"
+      },
+      {
+        "source_id": "ffiec-appendix-f",
+        "section_ref": "Efforts to Avoid Reporting or Recordkeeping Requirement ¶ 6",
+        "why_wrong": "one customer's own sub-$3,000 deposits consolidated into a master account: a structuring flag, not many parties funnelled through intermediaries"
+      }
+    ]
+  },
+  {
+    "id": "CQ-010",
+    "pattern_type": "bipartite",
+    "why_hard": "No red flag names a group of senders all paying the same group of receivers, so the right answer is the general one: repetitive, unexplained transfer patterns. The two distractors each look more specific and are each wrong on one fact -- ¶ 15 is one person using several accounts (a single sender, not a set of them), and Shell ¶ 8 requires knowing the parties are shell companies, which a shape-only system never knows.",
+    "candidate": {
+      "pattern_type": "bipartite",
+      "attributes": {
+        "anchor": "3301829410",
+        "stacked": false,
+        "layers": 1,
+        "senders": [
+          "3301829410",
+          "7719203354"
+        ],
+        "receivers": [
+          "1022938471",
+          "2210394857",
+          "4471928304",
+          "5509238817",
+          "6620194483",
+          "8810293847"
+        ],
+        "density": 1.0,
+        "total": 132600.0,
+        "window_days": 21
+      }
+    },
+    "correct_indicator": {
+      "source_id": "ffiec-appendix-f",
+      "section_ref": "Efforts to Avoid Reporting or Recordkeeping Requirement ¶ 13"
+    },
+    "distractors": [
+      {
+        "source_id": "ffiec-appendix-f",
+        "section_ref": "Efforts to Avoid Reporting or Recordkeeping Requirement ¶ 15",
+        "why_wrong": "the same person moving money between different accounts -- one sender, where this candidate is a set of them"
+      },
+      {
+        "source_id": "ffiec-appendix-f",
+        "section_ref": "Shell Company Activity ¶ 8",
+        "why_wrong": "transfers between shell companies; the shell premise is party identity, which is out of scope and not in evidence"
+      }
+    ]
   }
 ]

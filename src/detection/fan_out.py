@@ -1,9 +1,9 @@
 """Fan-out: one account paying many distinct recipients inside the window.
 
 The mirror of fan-in, and the detector that most needs reconciliation after it. It fires on the
-**first leg of every scatter-gather**, and on several typologies PRD §2 puts out of scope --
-gather-scatter, layered fan-out, bipartite. `precedence_order` therefore lets the more specific
-shape claim the transactions first.
+**first leg of every scatter-gather**, on the scatter half of every gather-scatter, on each sender
+of a bipartite block and on each branch of a layered fan-out. `precedence_order` therefore lets the
+more specific shape claim the transactions first.
 """
 
 from __future__ import annotations

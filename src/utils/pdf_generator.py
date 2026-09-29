@@ -33,6 +33,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hashlib
 import random
 import uuid
 from collections import defaultdict
@@ -200,6 +201,11 @@ DIVISION = "INSTITUTIONAL CLIENT SERVICES"
 ANCHORED = "anchored"      # one account collects or disperses the run
 CHAINED = "chained"        # the pattern is a path: A -> B -> C -> A
 SINGLE_WIRE = "single_wire"  # the pattern IS one transaction; the signal is the amount
+# The pattern is a connected structure with no single anchor: two layers, a hub with both sides,
+# a block of senders. Anchoring one of these plants only the edges touching one account -- which is
+# what happened to Scatter-Gather before v2: anchored on its source, it was planted as its scatter
+# leg alone, and the gather leg never reached the ledger.
+COMPONENT = "component"
 
 TYPOLOGY_SHAPE = {
     # Explicit rather than falling through to the ANCHORED default. Both are in scope per PRD §2,
@@ -208,6 +214,13 @@ TYPOLOGY_SHAPE = {
     "Fan_In": ANCHORED,
     "Fan_Out": ANCHORED,
     "Cycle": CHAINED,
+    "Scatter-Gather": COMPONENT,
+    "Gather-Scatter": COMPONENT,
+    "Deposit-Send": COMPONENT,
+    "Layered_Fan_In": COMPONENT,
+    "Layered_Fan_Out": COMPONENT,
+    "Bipartite": COMPONENT,
+    "Stacked Bipartite": COMPONENT,
     "Over-Invoicing": SINGLE_WIRE,
     "Single_large": SINGLE_WIRE,
 }
@@ -218,33 +231,110 @@ def shape_of(typology: str) -> str:
     return TYPOLOGY_SHAPE.get(typology, ANCHORED)
 
 
-# SAML-D labels that map onto the five in-scope patterns (PRD §2), seeded first when picking
-# monthly cases.
+# SAML-D labels that map onto the nine in-scope patterns (PRD v2 §1), seeded first when picking
+# monthly cases. Layered_Fan_In/Out both become `layered_fan`, Bipartite and Stacked Bipartite both
+# `bipartite`.
 #
-# This list was the old blueprint's, and it named the wrong things: Deposit-Send, Gather-Scatter,
-# Layered_Fan_In/Out and Over-Invoicing are all *excluded* by PRD §2, while plain Fan_In and
-# Fan_Out -- two of the five detectors -- were absent entirely. Regenerating with the old list
-# produced ledgers in which three of five detectors had nothing to find.
-#
-# Measured in 2023-05..09: Structuring 673 · Smurfing 347 · Fan_Out 145 · Cycle 139 ·
-# Fan_In 137 · Scatter-Gather 122. Every one is available.
+# v1 excluded Deposit-Send, Gather-Scatter, Layered and Bipartite; v2 brings them in. Smurfing goes
+# the other way: PRD v2 §2 defers it ("structuring-adjacent"), and it cannot stay planted as
+# structuring -- all 932 of its rows are cash deposits at a median $2,629, so it would sit in the
+# structuring gold set and look like deposit-send's cash leg at the same time.
 PRIORITY_TYPOLOGIES = [
-    "Structuring",      # -> structuring
-    "Smurfing",         # -> structuring (many small deposits by many parties)
-    "Fan_In",           # -> fan_in
-    "Fan_Out",          # -> fan_out
-    "Cycle",            # -> cycle
-    "Scatter-Gather",   # -> scatter_gather
+    "Structuring",       # -> structuring
+    "Fan_In",            # -> fan_in
+    "Fan_Out",           # -> fan_out
+    "Cycle",             # -> cycle
+    "Scatter-Gather",    # -> scatter_gather
+    "Gather-Scatter",    # -> gather_scatter
+    "Deposit-Send",      # -> deposit_send
+    "Layered_Fan_In",    # -> layered_fan
+    "Layered_Fan_Out",   # -> layered_fan
+    "Bipartite",         # -> bipartite
+    "Stacked Bipartite", # -> bipartite
 ]
 
-# Labelled suspicious, but out of scope per PRD §2. Kept in the ledgers as *unflagged* context so
+# Labelled suspicious, but out of scope per PRD v2 §2. Kept in the ledgers as *unflagged* context so
 # precision is measurable against activity that genuinely looks odd -- never planted as a case,
 # because a detector is not expected to find them and recall must not be diluted by them.
 OUT_OF_SCOPE_TYPOLOGIES = frozenset({
-    "Cash_Withdrawal", "Deposit-Send", "Layered_Fan_In", "Layered_Fan_Out", "Stacked Bipartite",
-    "Behavioural_Change_1", "Behavioural_Change_2", "Bipartite", "Gather-Scatter", "Single_large",
-    "Over-Invoicing",
+    "Smurfing", "Cash_Withdrawal", "Behavioural_Change_1", "Behavioural_Change_2",
+    "Single_large", "Over-Invoicing",
 })
+
+# PRD v2 §5.1 "Option 1": SAML-D is jurisdiction-neutral, so the two threshold-sensitive patterns
+# draw gold instances whose amounts already sit just under the US $10,000 CTR level. A cluster
+# qualifies when at least half its threshold-relevant rows (every row for structuring, the cash
+# deposits for deposit-send) fall in this band. A *data selection* criterion, deliberately not tied
+# to the structuring detector's configured band: tuning the band must not move the gold set.
+#
+# Measured over all of SAML-D: 21 of 224 receiver-anchored structuring clusters qualify, and 45 of
+# 473 Deposit-Send cash deposits are in the band.
+ALIGNED_BAND = (8_000, 10_000)
+
+# Smallest planted instance, where a typology's whole pattern is smaller than `min_cluster`.
+# Deposit-send is one deposit and one send: SAML-D spreads a hub's ~6 pairs over ~250 days, so a
+# month usually holds exactly one pair, and a 3-edge minimum was rejecting the complete pattern.
+MIN_CLUSTER_OF = {"Deposit-Send": 2}
+THRESHOLD_SENSITIVE = frozenset({"Structuring", "Deposit-Send"})
+
+
+def threshold_aligned(typology: str, rows: pd.DataFrame) -> bool:
+    """Whether a cluster is an Option-1 instance: its relevant amounts hug $10,000 from below."""
+    if typology == "Deposit-Send" and "Payment_type" in rows:
+        rows = rows[rows.Payment_type == "Cash Deposit"]
+    if rows.empty:
+        return False
+    low, high = ALIGNED_BAND
+    return bool(((rows.Amount >= low) & (rows.Amount < high)).mean() >= 0.5)
+
+
+def partition_of(key: int) -> str:
+    """Which corpus a SAML-D cluster belongs to, fixed by its anchor account.
+
+    The dev and eval corpora slice the same months, and both take the largest clusters first -- so
+    before this, 405 of the 467 flagged rows in the dev directory were planted in the eval corpus
+    as well, and "held out" was not true. A hash of the anchor splits SAML-D's clusters in two once
+    and for all: a cluster is tuning data or golden data, never both, whichever months or sizes a
+    profile asks for.
+    """
+    digest = hashlib.sha256(f"finguard-partition:{key}".encode()).digest()
+    return "eval" if digest[0] % 2 else "dev"
+
+
+def admissible(typology: str, rows: pd.DataFrame, config: "SliceConfig", key: int) -> bool:
+    """Whether a profile may plant this cluster: Option 1 first, then the dev/eval partition.
+
+    ``aligned`` (the golden corpus) takes *every* threshold-aligned instance of the two sensitive
+    typologies whatever its partition -- there are only ~21 structuring ones in all of SAML-D --
+    and ``exclude_aligned`` (the tuning corpus) never takes one, so they stay held out. Everything
+    else follows `partition_of`.
+    """
+    if typology in THRESHOLD_SENSITIVE and config.threshold_selection != "any":
+        aligned = threshold_aligned(typology, rows)
+        if config.threshold_selection == "aligned":
+            return aligned
+        if aligned:
+            return False
+    return config.partition is None or partition_of(key) == config.partition
+
+
+def components(cases: pd.DataFrame) -> list[pd.Index]:
+    """Weakly connected components of one typology's edges, largest first, stable on ties."""
+    parent: dict[int, int] = {}
+
+    def find(node: int) -> int:
+        parent.setdefault(node, node)
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    for sender, receiver in zip(cases.Sender_account, cases.Receiver_account):
+        parent[find(int(sender))] = find(int(receiver))
+    groups: dict[int, list] = defaultdict(list)
+    for index, sender in zip(cases.index, cases.Sender_account):
+        groups[find(int(sender))].append(index)
+    return sorted((pd.Index(sorted(g)) for g in groups.values()), key=lambda g: (-len(g), g[0]))
 
 
 # --- synthetic identities ------------------------------------------------------------
@@ -393,6 +483,11 @@ class SliceConfig:
     # months one-per-typology tops out at 36 -- hence the knob. Declared after `profile` so the
     # existing positional call sites keep meaning what they say.
     clusters_per_typology: int = 1
+    # PRD v2 Option 1 -- see `admissible`. `any` keeps the large batch as it was.
+    threshold_selection: str = "any"
+    # Which half of SAML-D's clusters this profile may plant -- see `partition_of`. None plants
+    # from both, which only a corpus nobody measures against may do.
+    partition: str | None = None
 
 
 # The emissions Phase 2 calls for. `dev` is three working batches plus a clean control; `large`
@@ -401,38 +496,88 @@ class SliceConfig:
 #
 # ~500 rather than the old 220: five typologies need room to plant without crowding each other,
 # where 220 was sized for four geometric primitives.
+#
+# v2: nine patterns from eleven SAML-D labels, and every profile plants every typology every month.
+# Dev and eval now share months but never a cluster -- see `partition_of`.
 PROFILES = {
+    # Dev spans seven months in two runs because 2023-04 and 2023-05 are the large batch and the
+    # clean control, and a log is named by its month. Two clusters per typology per month gives
+    # ~14 tuning instances per label: three, which is what one month each gave, is too few to tell
+    # a threshold from noise.
     "dev": [
-        SliceConfig("2023-06", 3, 500, 3, 3, 20260814, "dev"),
+        SliceConfig("2022-12", 4, 1_500, 11, 3, 20260814, "dev", clusters_per_typology=2,
+                    threshold_selection="exclude_aligned", partition="dev"),
+        SliceConfig("2023-06", 3, 1_500, 11, 3, 20260814, "dev", clusters_per_typology=2,
+                    threshold_selection="exclude_aligned", partition="dev"),
         SliceConfig("2023-05", 1, 500, 0, 3, 20260814, "dev-control"),
     ],
     # 2023-04: outside the dev window, and inside SAML-D's range. The corpus ends at 2023-08,
     # so a month after that silently produces nothing.
-    "large": [SliceConfig("2023-04", 1, 10_000, 12, 3, 20260814, "large")],
+    "large": [SliceConfig("2023-04", 1, 10_000, 12, 3, 20260814, "large",
+                          threshold_selection="exclude_aligned", partition="dev")],
     # Phase 8's golden corpus. Six months SAML-D has and nothing else uses -- dev holds 2023-06..08,
     # the control is 2023-05 and the 10k batch is 2023-04 -- with three clusters per typology per
     # month. That yields ~90 planted instances, comfortably above the 15 per pattern the golden set
     # selects, and leaves the existing corpora untouched so every number measured against them
     # still stands.
-    # 11 months at 1,200 messages, every in-scope typology, three clusters of each per month. The
-    # sizing is a consequence of MAX_FLAGGED_SHARE: a cluster averages ~20 transactions, so a
-    # 500-message batch holds three of them before the flagged share stops being credible, and the
-    # golden set needs 75. It uses the same months as the dev corpus on purpose -- a different slice
-    # of the same source, in its own directory, rather than a different period whose typology mix
-    # would be an accident of the calendar.
-    "eval": [SliceConfig("2022-10", 11, 1_200, 6, 3, 20260814, "eval", clusters_per_typology=3)],
+    # v2: 11 months at 2,400 messages, all eleven in-scope labels, two clusters of each per month.
+    # The sizing is a consequence of MAX_FLAGGED_SHARE: ~22 clusters of ~9 transactions stays near
+    # 8% flagged, and the golden set needs 135. It uses the same months as the dev corpus on purpose
+    # -- a different slice of the same source, in its own directory, rather than a different period
+    # whose typology mix would be an accident of the calendar -- and Option 1's aligned clusters are
+    # the eval profile's alone: dev is built with `exclude_aligned`.
+    "eval": [SliceConfig("2022-10", 11, 2_400, 11, 3, 20260814, "eval", clusters_per_typology=3,
+                         threshold_selection="aligned", partition="eval")],
 }
 
 
+# Structural typologies are planted only when the *whole* SAML-D cluster falls inside the batch
+# month. SAML-D's gather-scatter, layered and bipartite clusters run 13-23 days, so a month boundary
+# routinely cuts one in half, and the half that lands in the month is a different shape -- measured
+# on the dev corpus, most "Gather-Scatter" instances planted without this rule had only their
+# scatter side, which is a fan-out wearing the wrong label. PRD v2 §2.7 scopes cross-month schemes
+# out, so a golden instance must be one a single batch can contain. Deposit-Send is exempt: its
+# hubs span ~250 days and each deposit-then-send pair is a complete instance on its own.
+WHOLE_CLUSTER_ONLY = frozenset({
+    "Scatter-Gather", "Gather-Scatter", "Layered_Fan_In", "Layered_Fan_Out",
+    "Bipartite", "Stacked Bipartite",
+})
+ROW_KEY = ["Date", "Time", "Sender_account", "Receiver_account", "Amount"]
+
+
+def contained_clusters(flagged: pd.DataFrame) -> set[tuple]:
+    """Row keys of every structural-typology row whose whole cluster sits in one month."""
+    keys: set[tuple] = set()
+    for typology, rows in flagged[flagged.Laundering_type.isin(WHOLE_CLUSTER_ONLY)].groupby(
+        "Laundering_type"
+    ):
+        for component in components(rows):
+            members = rows.loc[component]
+            if members.Date.str.slice(0, 7).nunique() == 1:
+                keys.update(map(tuple, members[ROW_KEY].itertuples(index=False)))
+    return keys
+
+
 def load_window(csv: Path, periods: list[pd.Period]) -> pd.DataFrame:
-    """Stream the 9.5M-row CSV and keep only the months we are rendering."""
+    """Stream the 9.5M-row CSV and keep only the months we are rendering.
+
+    Every flagged row in the file is kept aside while streaming, because whether a cluster is whole
+    inside a month can only be decided against the months either side of it -- see
+    `WHOLE_CLUSTER_ONLY`. The result carries that as a `Contained` column.
+    """
     wanted = {str(p) for p in periods}
     frames = []
+    flagged = []
     for chunk in pd.read_csv(csv, usecols=USED_COLUMNS, chunksize=1_000_000):
         month = chunk.Date.str.slice(0, 7)
         frames.append(chunk[month.isin(wanted)])
+        flagged.append(chunk[chunk.Is_laundering == 1])
     window = pd.concat(frames, ignore_index=True)
     window["Period"] = window.Date.str.slice(0, 7)
+    contained = contained_clusters(pd.concat(flagged, ignore_index=True))
+    window["Contained"] = [
+        key in contained for key in map(tuple, window[ROW_KEY].itertuples(index=False))
+    ]
     return window
 
 
@@ -524,6 +669,25 @@ def select_cases(
             selected_indices.append(cases.nlargest(config.clusters_per_typology, "Amount").index)
             continue
 
+        if shape == COMPONENT:
+            taken = 0
+            for component in components(cases):
+                minimum = MIN_CLUSTER_OF.get(typology, config.min_cluster)
+                if taken >= config.clusters_per_typology or len(component) < minimum:
+                    break
+                rows = cases.loc[component]
+                if typology in WHOLE_CLUSTER_ONLY and not rows.Contained.all():
+                    continue
+                key = int(min(rows.Sender_account.min(), rows.Receiver_account.min()))
+                if not admissible(typology, rows, config, key):
+                    continue
+                selected_indices.append(component)
+                # The busiest account carries the context traffic and the US domicile.
+                busiest = pd.concat([rows.Sender_account, rows.Receiver_account]).value_counts()
+                anchors.add(int(busiest.index[0]))
+                taken += 1
+            continue
+
         if shape == CHAINED:
             # Several rings per month where the month's edges support it, taken one at a time from
             # what the previous walk did not use. Disjoint by construction, so a second chain is a
@@ -535,6 +699,10 @@ def select_cases(
                 chain = select_chain(remaining)
                 if len(chain) < config.min_cluster:
                     break
+                if not admissible(typology, remaining.loc[chain], config,
+                                  int(remaining.loc[chain].Sender_account.min())):
+                    remaining = remaining.drop(chain)
+                    continue
                 selected_indices.append(chain)
                 anchors.update(int(a) for a in remaining.loc[chain].Sender_account)
                 remaining = remaining.drop(chain)
@@ -546,7 +714,15 @@ def select_cases(
         side = anchor_side(cases)
         counts = cases[side].value_counts()
         qualifying = counts[counts >= config.min_cluster]
+        qualifying = qualifying[[
+            admissible(typology, cases[cases[side] == account], config, int(account))
+            for account in qualifying.index
+        ]]
         if qualifying.empty:
+            if config.partition is not None or (
+                typology in THRESHOLD_SENSITIVE and config.threshold_selection != "any"
+            ):
+                continue  # no admissible instance this month; planting a wrong one is worse
             qualifying = counts.head(1)
         # Several anchors rather than only the busiest, so one month can contribute more than one
         # instance of a typology. Taken in descending size and then by account, which is stable

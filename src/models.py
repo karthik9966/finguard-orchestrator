@@ -172,6 +172,10 @@ class Candidate(BaseModel):
     member_txn_refs: list[str] = Field(min_length=1)
     attributes: dict[str, Any] = Field(default_factory=dict)
     detection_confidence: float = Field(ge=0.0, le=1.0)
+    # LLD v2: the money-flow structure that matched -- `{"nodes": [...], "edges": [{ref, source,
+    # target, amount, timestamp, payment_kind}]}` -- so a reviewer sees the shape, not a flat list.
+    # Built by the GraphEngine from the member transactions, never by the model.
+    subgraph: dict[str, Any] | None = None
 
     @field_validator("member_txn_refs")
     @classmethod

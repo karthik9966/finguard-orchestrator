@@ -136,7 +136,7 @@ def test_precedence_order_must_cover_every_pattern(tmp_path):
 
 
 def test_precedence_order_rejects_duplicates(tmp_path):
-    order = ["structuring", "structuring", "cycle", "scatter_gather", "fan_in", "fan_out"]
+    order = ["structuring", *PATTERN_TYPES]
     path = write_config(tmp_path, lambda d: d["detection"].__setitem__("precedence_order", order))
     with pytest.raises(ValueError, match="duplicates"):
         load_config(path)
@@ -151,12 +151,13 @@ def test_the_obligation_map_must_have_a_key_for_every_pattern(tmp_path):
         load_config(path)
 
 
-def test_fan_out_is_in_scope():
-    """The PRD §2 in-scope list names fan-out; the LLD's pattern_type Literal has four values and
-    omits it. This suite follows the PRD. If the documents are ever reconciled the other way,
-    this test is where that decision has to be made explicitly rather than by deletion."""
-    assert "fan_out" in PATTERN_TYPES
-    assert len(PATTERN_TYPES) == 5
+def test_the_nine_v2_patterns_are_in_scope():
+    """PRD v2 §1 names nine. The v1 LLD Literal omitted fan-out; v2's includes it, so the two
+    documents now agree. Smurfing is deliberately absent -- PRD v2 §2 defers it."""
+    assert PATTERN_TYPES == (
+        "structuring", "fan_in", "fan_out", "cycle", "scatter_gather",
+        "gather_scatter", "deposit_send", "layered_fan", "bipartite",
+    )
 
 
 # --- 4. the environment half ---------------------------------------------------------------

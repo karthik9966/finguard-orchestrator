@@ -13,6 +13,7 @@ from decimal import Decimal
 
 import pytest
 
+from src.config import PATTERN_TYPES
 from src.models import (
     SCHEMA_VERSION,
     Candidate,
@@ -165,11 +166,12 @@ def test_payment_kind_is_normalised_in_one_place(instrument, kind):
     assert record(instrument=instrument).payment_kind == kind
 
 
-def test_only_the_five_in_scope_patterns_are_accepted():
-    for pattern in ("structuring", "fan_in", "fan_out", "cycle", "scatter_gather"):
+def test_only_the_nine_in_scope_patterns_are_accepted():
+    for pattern in PATTERN_TYPES:
         assert candidate(pattern_type=pattern).pattern_type == pattern
-    # PRD §2 excludes these explicitly; a detector emitting one would be out of scope.
-    for excluded in ("gather_scatter", "layered_fan_in", "bipartite", "single_large", "magnitude"):
+    # PRD v2 §2 excludes these explicitly; a detector emitting one would be out of scope. The
+    # SAML-D spellings are rejected too: `layered_fan` and `bipartite` are one value per family.
+    for excluded in ("smurfing", "layered_fan_in", "stacked_bipartite", "single_large", "magnitude"):
         with pytest.raises(ValueError):
             candidate(pattern_type=excluded)
 
