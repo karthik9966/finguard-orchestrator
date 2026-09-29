@@ -50,6 +50,7 @@ def build_graph(records: list[TransactionRecord]) -> BatchGraph:
                 "amount": float(record.amount),
                 "timestamp": record.timestamp,
                 "currency": record.currency,
+                "payment_kind": record.payment_kind,
             }
             for record in records
         ]
@@ -65,6 +66,7 @@ def build_graph(records: list[TransactionRecord]) -> BatchGraph:
             key=record.txn_ref,
             amount=float(record.amount),
             timestamp=record.timestamp,
+            payment_kind=record.payment_kind,
         )
 
     return BatchGraph(

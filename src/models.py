@@ -45,6 +45,26 @@ Tier = Literal["statute", "regulation", "guidance"]
 Authority = Literal["binding", "illustrative"]
 ExtractionMethod = Literal["deterministic", "llm_fallback"]
 FindingStatus = Literal["pending_review", "cleared", "escalated", "approved", "needs_review"]
+PaymentKind = Literal[
+    "cash_deposit", "cash_withdrawal", "cross_border", "ach", "cheque", "card", "wire", "other"
+]
+
+# The one place a free-text instrument becomes a kind a detector can key on. Deposit-send reads
+# `cash_deposit` in and a transfer out; everything else reads nothing here, so an unknown
+# spelling degrades to "other" rather than to a wrong kind.
+_PAYMENT_KINDS: dict[str, PaymentKind] = {
+    "cash deposit": "cash_deposit",
+    "cash withdrawal": "cash_withdrawal",
+    "cross-border": "cross_border",
+    "cross border": "cross_border",
+    "ach": "ach",
+    "cheque": "cheque",
+    "check": "cheque",
+    "credit card": "card",
+    "debit card": "card",
+    "card": "card",
+    "wire": "wire",
+}
 
 
 # =============================================================================================
@@ -94,6 +114,10 @@ class TransactionRecord(BaseModel):
     @property
     def is_cross_border(self) -> bool:
         return self.sender_country != self.receiver_country
+
+    @property
+    def payment_kind(self) -> PaymentKind:
+        return _PAYMENT_KINDS.get(" ".join(self.instrument.lower().split()), "other")
 
 
 class QuarantinedMessage(BaseModel):

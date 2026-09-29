@@ -150,6 +150,21 @@ def test_candidate_ids_are_stable_across_runs():
     assert first != Candidate.make_id("fan_in", "ACCT-1", ["A", "B"])
 
 
+@pytest.mark.parametrize(
+    ("instrument", "kind"),
+    [
+        ("CASH DEPOSIT", "cash_deposit"),
+        ("Cash  Withdrawal", "cash_withdrawal"),
+        ("CROSS-BORDER", "cross_border"),
+        ("Debit card", "card"),
+        ("ACH", "ach"),
+        ("UNKNOWN", "other"),
+    ],
+)
+def test_payment_kind_is_normalised_in_one_place(instrument, kind):
+    assert record(instrument=instrument).payment_kind == kind
+
+
 def test_only_the_five_in_scope_patterns_are_accepted():
     for pattern in ("structuring", "fan_in", "fan_out", "cycle", "scatter_gather"):
         assert candidate(pattern_type=pattern).pattern_type == pattern

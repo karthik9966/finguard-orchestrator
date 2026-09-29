@@ -361,6 +361,19 @@ def instruction_time(instruction: str) -> time:
     return time(hour, minute, second)
 
 
+def instruction_type(instruction: str) -> str:
+    """The payment type in `:72:`'s "/INS/<type> <time>" -- all of it, not its first word.
+
+    Taking the first word made "CASH DEPOSIT" and "CASH WITHDRAWAL" both "CASH", which is the
+    exact distinction deposit-send turns on: SAML-D carries 225k deposits and 300k withdrawals as
+    separate payment types, and the split was being lost here rather than in the data.
+    """
+    if "/INS/" not in (instruction or ""):
+        return ""
+    body = instruction.split("/INS/")[-1]
+    return " ".join(_INSTRUCTION_TIME.sub(" ", body).split())
+
+
 def to_record(wire: Wire) -> TransactionRecord:
     """A parsed wire as the standard contract.
 
@@ -380,9 +393,7 @@ def to_record(wire: Wire) -> TransactionRecord:
         timestamp=moment,
         sender_country=wire.sender_country,
         receiver_country=wire.receiver_country,
-        # `:72:` is "/INS/<type> <time>"; the type is the instrument.
-        instrument=(wire.instruction.split("/INS/")[-1].split()[0] if "/INS/" in wire.instruction
-                    else wire.bank_operation_code or "UNKNOWN"),
+        instrument=instruction_type(wire.instruction) or wire.bank_operation_code or "UNKNOWN",
         txn_type=wire.bank_operation_code or None,
         # Attacker-controlled free text. It reaches the candidate and the grounding context on
         # purpose -- Evaluation Design §5's injection fixture tests nothing if it does not -- and
