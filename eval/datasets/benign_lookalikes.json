@@ -118,5 +118,66 @@
     "expected_risk_band": "low",
     "why_benign": "A parent collects VAT from three subsidiaries, pays the revenue authority, and receives a reclaim which it redistributes. One-to-many-to-one with a government counterparty in the middle of it.",
     "spec": {"pattern": "scatter_gather", "intermediaries": 3, "government_counterparty": true, "window_days": 30}
+  },
+  {
+    "id": "BL-021",
+    "shape": "gather_scatter",
+    "scenario": "Payroll bureau client account",
+    "expected_risk_band": "low",
+    "why_benign": "A payroll bureau receives each client employer's gross payroll into one client-money account and, two days later, pays it out as net salaries to that employer's staff. Many in, many out, conserved, inside a week -- a textbook gather-scatter -- and the same employers and employees recur every month on the published pay dates.",
+    "spec": {
+      "pattern": "gather_scatter",
+      "senders": 6,
+      "recipients": 40,
+      "conservation": 0.98,
+      "recurring_monthly": true,
+      "window_days": 3
+    }
+  },
+  {
+    "id": "BL-022",
+    "shape": "deposit_send",
+    "scenario": "Restaurant paying its importer from weekend takings",
+    "expected_risk_band": "medium",
+    "why_benign": "A restaurant banks Monday's cash takings and on Tuesday wires almost the same sum to the overseas importer that supplies its produce, against an invoice. Cash in, matching wire out, cross-border -- the detector is right to raise it. It is medium rather than low for the same reason as BL-007: the explanation is an invoice somebody has to look at, and cash-intensive is a risk factor, not an alibi.",
+    "spec": {
+      "pattern": "deposit_send",
+      "members": 2,
+      "amount": "8750.00",
+      "cross_border": true,
+      "invoice_referenced": true,
+      "window_days": 2
+    }
+  },
+  {
+    "id": "BL-023",
+    "shape": "layered_fan",
+    "scenario": "Franchise cash sweep through regional accounts",
+    "expected_risk_band": "low",
+    "why_benign": "Twelve franchise stores sweep their daily balances to four regional operating accounts, which sweep to the franchisor's treasury account each Friday. Two tiers of collection into one root is exactly a layered fan-in, but every account belongs to the same corporate group and the sweep is a standing instruction.",
+    "spec": {
+      "pattern": "layered_fan",
+      "direction": "in",
+      "branches": 4,
+      "leaves": 12,
+      "same_corporate_group": true,
+      "standing_instruction": true,
+      "window_days": 7
+    }
+  },
+  {
+    "id": "BL-024",
+    "shape": "bipartite",
+    "scenario": "Two marketplaces settling with the same sellers",
+    "expected_risk_band": "low",
+    "why_benign": "Two online marketplaces each pay out weekly settlements to the same eight independent sellers who list on both. Every sender pays every receiver, so the block is complete -- and it is complete because the sellers chose to list on both platforms, which each platform's seller agreement documents.",
+    "spec": {
+      "pattern": "bipartite",
+      "senders": 2,
+      "receivers": 8,
+      "density": 1.0,
+      "recurring_weekly": true,
+      "window_days": 7
+    }
   }
 ]

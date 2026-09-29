@@ -54,6 +54,21 @@ ACCOUNT_FIELDS = frozenset(
         "counterparty",
         "counterparties",
         "collector_account",
+        # Detector geometry. `route`, `sink` and `intermediaries` were missing until v2 and went
+        # into the grounding prompt as raw account numbers; `source`/`target`/`nodes` are the
+        # subgraph evidence, and the rest are the v2 detectors' attribute names.
+        "route",
+        "sink",
+        "intermediaries",
+        "source",
+        "target",
+        "nodes",
+        "hub",
+        "senders",
+        "receivers",
+        "collectors",
+        "feeders",
+        "layers",
     }
 )
 

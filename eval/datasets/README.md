@@ -1,13 +1,13 @@
 # Golden datasets
 
-The six corpora of Evaluation Design §3. Sizes are deliberately modest — small enough that every
+The six corpora of Evaluation Design v2 §3. Sizes are deliberately modest — small enough that every
 label can be checked by a person, which is the only thing that makes them *golden*.
 
 | dataset | records | origin | measures |
 |---|---|---|---|
-| `labeled_patterns.json` | 75 (15 × 5) | **derived** | recall ≥ 0.90, triage, narrative quality |
+| `labeled_patterns.json` | 123 (15 × 7; gather_scatter 12, scatter_gather 6) | **derived** | recall ≥ 0.90 per pattern, triage, narrative quality |
 | `clean_batch.json` | 1 batch, 500 txns | **derived** | zero candidates, zero LLM calls, $0.0000 |
-| `benign_lookalikes.json` | 20 | **authored** | triage: must rank below real launderers |
+| `benign_lookalikes.json` | 24 | **authored** | triage: must rank below real launderers |
 | `complex_queries.json` | 10 | **authored** | context precision ≥ 0.90 |
 | `malformed_inputs.json` | 10 (+ files) | **authored** | ingestion degrades, never fabricates |
 | `injected_memos.json` | 5 | **authored** | memo text is inert data, not instruction |
@@ -35,11 +35,21 @@ disagreeing with the label.
 uv run finguard-ledger --profile eval
 ```
 
-That is a **different corpus** from `data/processed/ledger/`, deliberately. Every number in
-`config.yaml` — the 14-day window, the 0.2 band fraction, `min_sources: 4` — cites "measured across
-the four dev batches" as its evidence. Evaluating on that same data would be marking my own homework.
+That is a **different corpus** from `data/processed/ledger/`, deliberately: every number in
+`config.yaml` cites a dev-corpus measurement as its evidence, and evaluating on that same data would be
+marking my own homework.
 
-The eval corpus is 11 months × 1,200 messages with three clusters of each in-scope typology per
+In v1 it was less different than this paragraph claimed. Both corpora sliced the same SAML-D months
+and took the largest clusters first, so every dev-planted row was also planted here, and 3 of the 75
+v1 golden instances were tuning clusters. **v2 partitions SAML-D's clusters by a hash of the anchor
+account** (`partition_of` in `pdf_generator.py`); the two corpora now share no planted row.
+
+What else decides a v2 instance — whole structures only, Option 1 for structuring and deposit-send,
+deposit-send as a pair — and why two patterns fall short of fifteen is in
+[TEST_DESIGN.md](../../docs/TEST_DESIGN.md). Records of a short pattern carry a `supply_limited` field
+saying so, and `test_golden_datasets.py` requires it on exactly those records.
+
+The eval corpus is 11 months × 2,400 messages with up to three clusters of each in-scope typology per
 month, and it is deterministic: same seed, same SAML-D, same references. That reproducibility is what
 makes it safe to commit a dataset that points into a generated corpus, and `--check` is the assertion
 that they still agree.
@@ -50,7 +60,9 @@ Neither ledger is committed (`data/processed/` is gitignored — it is 60 MB of 
 
 These are the ones to argue with:
 
-- **`benign_lookalikes.json` risk bands.** 13 `low` and 7 `medium`. The `medium` ones are deliberate:
+- **`benign_lookalikes.json` risk bands.** 16 `low` and 8 `medium`; v2 added one per new shape
+  (BL-021–024), of which the deposit-send one — a restaurant wiring its takings to an overseas
+  importer — is `medium` for BL-007's reason. The `medium` ones are deliberate:
   a cash-intensive restaurant depositing $7,400–$9,100 weekly (BL-007), a refund-and-repurchase round
   trip retaining 97% (BL-012), a court-ordered settlement to 60 claimants (BL-016). Each is
   *explainable* but the explanation is a document somebody has to look at — calling them `low` would
@@ -80,6 +92,9 @@ not UTF-8 (`non_utf8_latin1.txt`) — which is why they are files and not JSON s
 control, so any difference in outcome is attributable to the injection and to nothing else.
 
 ## First measured baseline (Phase 8b)
+
+*v1's measurements, kept for the record. Current numbers are in
+[TEST_RESULTS.md](../../docs/TEST_RESULTS.md).*
 
 ```
 recall (pattern level)            0.8267   target >= 0.90   FAIL

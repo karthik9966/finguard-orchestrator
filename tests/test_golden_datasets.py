@@ -30,26 +30,40 @@ needs_corpus = pytest.mark.skipif(
 def test_all_six_corpora_are_present():
     """Eval Design §3's set. A missing one is a metric that silently is not measured."""
     assert corpora.summary() == {
-        "labeled_patterns": 75,
-        "benign_lookalikes": 20,
-        # Six rather than Eval Design's "~10", and the reason is a finding about the system:
-        # `indicator_query` is a function of pattern type and threshold, so there are exactly six
-        # distinguishable indicator queries. Ten records meant four duplicate measurements -- the
-        # same query text scored twice under different ids.
-        "complex_queries": 6,
+        # 15 x 9, less the two patterns SAML-D cannot supply 15 whole held-out instances of.
+        "labeled_patterns": 123,
+        "benign_lookalikes": 24,
+        # One per distinguishable indicator query, and the reason is a finding about the system:
+        # `indicator_query` is a function of pattern type and threshold, so v1 had exactly six and
+        # v2's four new patterns make ten. More records than that would score the same query text
+        # twice under different ids.
+        "complex_queries": 10,
         "malformed_inputs": 10,
         "injected_memos": 5,
         "clean_batch": 1,
     }
 
 
-def test_fifteen_labeled_instances_of_every_pattern():
-    """15 rather than Eval Design's "~10 / pattern", per the migration plan's conflict table: a
-    denominator where one miss is 6.7% rather than 10%."""
+def test_fifteen_labeled_instances_of_every_pattern_the_data_can_supply():
+    """15 rather than Eval Design's "~10 / pattern": a denominator where one miss is 6.7% rather than
+    10%. Two patterns fall short because SAML-D has too few whole, held-out clusters of them; they
+    take every instance there is, and each such record says so."""
+    from eval.build_datasets import SUPPLY_LIMITED
+
     counts: dict[str, int] = {}
     for record in corpora.labeled_patterns(require_ledger=False):
         counts[record.pattern_type] = counts.get(record.pattern_type, 0) + 1
-    assert counts == {pattern: 15 for pattern in PATTERN_TYPES}
+    assert set(counts) == set(PATTERN_TYPES)
+    for pattern, count in counts.items():
+        if pattern in SUPPLY_LIMITED:
+            assert SUPPLY_LIMITED[pattern][0] <= count <= 15, pattern
+        else:
+            assert count == 15, pattern
+
+    raw = json.loads((corpora.DATASETS / "labeled_patterns.json").read_text())
+    for record in raw:
+        short = counts[record["pattern_type"]] < 15
+        assert ("supply_limited" in record) == short, record["id"]
 
 
 def test_every_id_is_unique_across_every_corpus():
@@ -73,12 +87,17 @@ def test_no_instance_is_used_twice():
 def test_the_instances_are_spread_across_the_months_that_have_them():
     """15 clusters taken in batch order would come from the first two months, and a recall number
     measured on two months of one year is a narrower claim than it looks."""
+    from eval.build_datasets import SUPPLY_LIMITED
+
     for pattern in PATTERN_TYPES:
         batches = {
             r.batch for r in corpora.labeled_patterns(require_ledger=False)
             if r.pattern_type == pattern
         }
-        assert len(batches) >= 5, f"{pattern} draws from only {len(batches)} batch(es)"
+        # A supply-limited pattern takes every instance there is, so its spread is whatever SAML-D's
+        # calendar gave it; three months is still more than one year's accident.
+        minimum = 3 if pattern in SUPPLY_LIMITED else 5
+        assert len(batches) >= minimum, f"{pattern} draws from only {len(batches)} batch(es)"
 
 
 # --- the labels point at something real ----------------------------------------------------
@@ -187,8 +206,8 @@ def test_every_curated_indicator_pair_resolves():
     """Pairs, not chunk ids: `chunk_id = hash(source_id, section_ref, version)`, so a literal id goes
     stale on a re-chunk with no error. Phase 1c learned this on the obligation map."""
     queries = corpora.complex_queries(resolve=True)
-    assert len(queries) == 6
-    assert sum(1 for q in queries if q.scored) == 5
+    assert len(queries) == 10
+    assert sum(1 for q in queries if q.scored) == 9
 
 
 def test_the_unscored_query_says_why_it_is_unscored():
@@ -212,12 +231,27 @@ def test_a_distractor_is_never_the_correct_answer():
 # describing attributes nothing emits measures a candidate shape that never occurs -- which is
 # exactly what four of the first ten records did, and what this test exists to stop recurring.
 REAL_ATTRIBUTES = {
-    "structuring": {"anchor", "band", "count", "threshold", "total", "window_days"},
+    "structuring": {"anchor", "band", "count", "side", "threshold", "total", "window_days"},
     "fan_in": {"anchor", "count", "distinct_senders", "total", "window_days"},
     "fan_out": {"anchor", "count", "distinct_recipients", "total", "window_days"},
     "cycle": {"anchor", "hops", "retained_fraction", "route", "total", "window_days"},
     "scatter_gather": {
         "anchor", "sink", "intermediaries", "fan", "total", "window_days",
+    },
+    "gather_scatter": {
+        "anchor", "hub", "distinct_senders", "distinct_recipients", "total_in", "total_out",
+        "conservation", "window_days",
+    },
+    "deposit_send": {
+        "anchor", "pairs", "total_deposited", "total_sent", "max_gap_hours", "cross_border",
+        "cash_intensive", "window_hours",
+    },
+    "layered_fan": {
+        "anchor", "direction", "layers", "collectors", "branch_count", "leaf_count",
+        "traversal_truncated", "total", "window_days",
+    },
+    "bipartite": {
+        "anchor", "stacked", "layers", "senders", "receivers", "density", "total", "window_days",
     },
 }
 

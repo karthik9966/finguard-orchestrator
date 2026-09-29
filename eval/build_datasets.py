@@ -38,21 +38,46 @@ EVAL_LABELS = PROJECT_ROOT / "data" / "processed" / "eval_labels.csv"
 # for the same assertion to pass.
 CLEAN_BATCH = PROJECT_ROOT / "data" / "processed" / "ledger" / "2023-05_private_banking_log.txt"
 
-# SAML-D's typology labels mapped onto PRD §2's five patterns. Smurfing and Structuring both land on
-# `structuring`: SAML-D distinguishes them by *who* splits the deposits (one party or many mules),
-# which is a fact about the launderer, while the obligation -- 31 USC §5324 -- turns on the splitting.
+# SAML-D's typology labels mapped onto PRD v2's nine patterns. Two families collapse: layered fan-in
+# and fan-out are one `layered_fan` (direction is an attribute), plain and stacked bipartite are one
+# `bipartite`. Smurfing is no longer here -- PRD v2 §2 defers it, and the generator stopped planting
+# it -- so a Smurfing cluster reaching this map is a generator bug and fails as unmapped.
 PATTERN_OF = {
     "Structuring": "structuring",
-    "Smurfing": "structuring",
     "Fan_In": "fan_in",
     "Fan_Out": "fan_out",
     "Cycle": "cycle",
     "Scatter-Gather": "scatter_gather",
+    "Gather-Scatter": "gather_scatter",
+    "Deposit-Send": "deposit_send",
+    "Layered_Fan_In": "layered_fan",
+    "Layered_Fan_Out": "layered_fan",
+    "Bipartite": "bipartite",
+    "Stacked Bipartite": "bipartite",
 }
 
-# Eval Design §3 says "~10 / pattern"; the migration plan's conflict table settled on 15, for a
+# Eval Design v2 §3 says "~10 / pattern"; 15 was kept (confirmed 2026-09-29), for a
 # recall figure whose denominator is large enough that one miss is 6.7% rather than 10%.
 PER_PATTERN = 15
+
+# Patterns SAML-D cannot supply 15 of once the golden set is both held out and whole (confirmed
+# 2026-09-29: take what exists and say so, rather than plant month-truncated halves or tune on the
+# golden clusters). Measured over all of SAML-D: 15 Scatter-Gather clusters lie wholly inside one
+# month, and the dev/eval partition leaves 6 of them to eval; Gather-Scatter has 21, 12 in eval.
+# Each takes every instance the corpus has, above this floor, and the note travels with the record
+# so a recall figure over 6 is never read as one over 15.
+SUPPLY_LIMITED: dict[str, tuple[int, str]] = {
+    "scatter_gather": (
+        5,
+        "SAML-D has 15 Scatter-Gather clusters wholly inside one month; the dev/eval partition "
+        "leaves 6 to the golden set",
+    ),
+    "gather_scatter": (
+        10,
+        "SAML-D has 21 Gather-Scatter clusters wholly inside one month; the dev/eval partition "
+        "leaves 12 to the golden set",
+    ),
+}
 
 
 def instances() -> pd.DataFrame:
@@ -107,9 +132,10 @@ def labeled_patterns() -> list[dict[str, Any]]:
                     ordered.append((log, cluster, refs))
 
         chosen = ordered[:PER_PATTERN]
-        if len(chosen) < PER_PATTERN:
+        floor, note = SUPPLY_LIMITED.get(pattern, (PER_PATTERN, ""))
+        if len(chosen) < floor:
             raise SystemExit(
-                f"only {len(chosen)} {pattern} instances in the golden corpus, need {PER_PATTERN} "
+                f"only {len(chosen)} {pattern} instances in the golden corpus, need {floor} "
                 "-- raise `clusters_per_typology` or the month count in the eval profile"
             )
         for ordinal, (log, cluster, refs) in enumerate(chosen, start=1):
@@ -128,6 +154,7 @@ def labeled_patterns() -> list[dict[str, Any]]:
                 # candidate that clipped the edge of it.
                 "detected_when": "a candidate covers >= 0.5 of txn_refs",
                 "label_source": "SAML-D Is_laundering + Laundering_type (derived, not authored)",
+                **({"supply_limited": note} if note and len(chosen) < PER_PATTERN else {}),
             })
     return records
 

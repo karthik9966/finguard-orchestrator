@@ -94,6 +94,66 @@ detection:
   scatter_gather:
     min_fan: 3            # one -> many -> one needs at least three intermediaries to be a shape
 
+  # --- v2 detectors (LLD v2 §2.6) ---------------------------------------------------------
+  # Starting values read off SAML-D's cluster shapes, then swept on the v2 dev corpus: 7 months of
+  # the dev partition, 93 planted instances, whole clusters only. "named" is a candidate *of that
+  # pattern* covering the instance; "any" is any candidate covering it (the recall-test measure).
+  # The 10,000-message batch stayed at 308 candidates and the clean control at 0 through every
+  # change below. Full curves: docs/CONSTANTS.md.
+
+  # Many -> one -> many, with its own window: SAML-D hubs run 10-17 days end to end.
+  #
+  #     min_in/out 4, conservation 0.7-1.3 -> 1/5 named, 4/5 any
+  #     min_in/out 3, conservation 0.7-1.3 -> 1/5, 4/5
+  #     min_in/out 3, conservation 0.5-2.0 -> 3/5, 5/5
+  #
+  # Whole planted hubs had 3-6 counterparties a side and an out/in ratio anywhere from 0.80 to
+  # 4.06 -- SAML-D does not model conservation tightly, so the band only excludes a hub that
+  # plainly kept the money or paid out from elsewhere.
+  gather_scatter:
+    min_in: 3
+    min_out: 3
+    window_days: 21
+    min_conservation: 0.5
+    max_conservation: 2.0
+
+  # A cash deposit, then a transfer out of about the same amount. Over SAML-D's labelled pairs the
+  # send follows in a median 1.8 days (75th pct 2.6) and matches the deposit (median ratio 1.00).
+  # Timing alone is useless -- in one clean month 66% of depositors send *something* within 3 days
+  # -- so the amount match is the discriminator (first-following-send, all of SAML-D):
+  #
+  #     tolerance 1%, 3d -> 26% of laundering deposits,  1.0% of clean depositors
+  #     tolerance 2%, 3d -> 47%,                          1.7%
+  #     tolerance 5%, 3d -> 74%,                          4.2%
+  #     tolerance 5%, 7d -> 74%,                          8.8%
+  #
+  # On the dev corpus 11/14 at 5% and 72h; neither 10% nor 168h moved it.
+  deposit_send:
+    window_hours: 72
+    amount_tolerance: 0.05
+    send_kinds: [cross_border, ach, wire, cheque]
+    min_pairs: 1
+
+  # Funnels feeding funnels, two hops. A leaf counts only if its leg is inside the window of its
+  # branch's hand-off to the root (see layered_fan.py for why).
+  #
+  #     branches 3, leaves 6 -> 2/6 (v2 dev draft corpus)
+  #     branches 2, leaves 5 -> 6/9 named (whole-cluster dev corpus)
+  #     branches 2, leaves 4 -> 7/9
+  layered_fan:
+    min_branches: 2
+    min_leaves_per_branch: 2
+    min_total_leaves: 4
+    window_days: 28
+
+  # A set of senders all paying the same set of receivers. SAML-D Bipartite is K(2,7); a stacked
+  # layer can be as small as 2x3.   min_dst 4 -> 13/14 named;  min_dst 3 -> 14/14.
+  bipartite:
+    min_src: 2
+    min_dst: 3
+    min_density: 0.8
+    window_days: 21
+
   # detection_confidence = f(tightness, count, window compactness, aggregate ratio).
   # Weights sum to 1.0. Tightness is measured on the threshold-band subset, never the whole
   # group: one legitimate large wire moved a cluster's coefficient of variation by 43x, which is
@@ -105,10 +165,37 @@ detection:
     aggregate_ratio: 0.2
 
   # CandidateReconciler precedence, strongest claim first. This is load-bearing rather than
-  # hygiene: fan_out fires on the first leg of every scatter_gather and on several typologies
-  # the PRD puts out of scope (gather-scatter, layered fan-out, bipartite), so the more specific
-  # shape must win before fan_out is allowed to report the same transactions.
-  precedence_order: [structuring, cycle, scatter_gather, fan_in, fan_out]
+  # hygiene: fan_out fires on the first leg of every scatter_gather, and the fans fire inside every
+  # v2 structure, so the more specific shape must win before a fan may report the same
+  # transactions.
+  #
+  # v2: the specific multi-hop shapes go before the fans they contain. A layered fan-in's
+  # collectors are each a fan-in; a gather-scatter hub is a fan-in and a fan-out at once; a
+  # bipartite sender is a fan-out. deposit_send is two transactions and claims them first.
+  precedence_order:
+    [structuring, deposit_send, cycle, bipartite, layered_fan, gather_scatter, scatter_gather,
+     fan_in, fan_out]
+
+# ---------------------------------------------------------------------------------------------
+# Graph engine -- LLD v2 §2.5
+#
+# Cost guardrails, the graph's equivalent of `max_loops`: they bound how much of a dense graph one
+# query may touch, so a pathological batch degrades to a truncated search (logged) rather than to a
+# run that never finishes. None of them says what a pattern *is* -- that lives under detection.
+# ---------------------------------------------------------------------------------------------
+graph:
+  # Hops a layered traversal may walk from its root. No SAML-D layered or stacked cluster is deeper
+  # than 2 (all 138 of them measured: 113 are 2 deep, 25 are 1), so 3 leaves one hop of headroom.
+  max_traversal_depth: 3
+  # Accounts one traversal level may hold before the walk stops widening. A funnel's layer is 4-10
+  # accounts in SAML-D; a level of hundreds is a payment processor, not a funnel.
+  max_frontier: 200
+  # Senders considered for bipartite blocks, largest out-degree first. The pair search is
+  # quadratic in this, so it is the bound that matters on a dense graph.
+  max_block_senders: 500
+  # A receiver with more senders than this is excluded as a block member: it is a hub, and a hub
+  # joins every sender to every other and makes each pair look like a block.
+  max_block_side: 50
 
 # ---------------------------------------------------------------------------------------------
 # Reasoning core -- LLD §5
@@ -129,6 +216,10 @@ reasoning:
   schema_retries: 3
   llm_max_attempts: 3          # tenacity attempts on 429/5xx/timeout
   llm_timeout_seconds: 60
+  # Edges of the matched structure shown to the grounding model (PRD v2 §5.3). The largest golden
+  # instance has 24 transactions, so the cap bounds tokens on a pathological candidate without
+  # trimming a real one; beyond it the prompt says how many were left out.
+  evidence_edges_in_prompt: 30
   # There is deliberately **no candidate cap**. Measured on the June dev batch (500 messages,
   # 5 candidates), twice:
   #
@@ -228,6 +319,34 @@ pattern_to_obligations:
   scatter_gather:
     - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
     - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(ii)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(iii)"}
+    - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(e)"}
+
+  # --- v2 patterns ------------------------------------------------------------------------
+  # LLD v2 §5.2: the graph patterns have no dedicated statute the way structuring has § 5324, so
+  # they rest on the universal SAR duty and its no-lawful-purpose limb, plus the recordkeeping duty
+  # that makes each transfer leg traceable. Their specificity comes from the Tier-2 indicators.
+
+  # Fills and empties through one hub: the pass-through has no apparent purpose.
+  gather_scatter:
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(iii)"}
+    - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(e)"}
+
+  # Cash in, wire out. The cash leg is what engages the CTR regime; the send is a funds transfer.
+  deposit_send:
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(iii)"}
+    - {source_id: 31cfr1010.311, section_ref: "§ 1010.311"}
+    - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(e)"}
+
+  layered_fan:
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(iii)"}
+    - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(e)"}
+
+  bipartite:
+    - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)"}
     - {source_id: 31cfr1020.320, section_ref: "§ 1020.320(a)(2)(iii)"}
     - {source_id: 31cfr1010.410, section_ref: "§ 1010.410(e)"}
 

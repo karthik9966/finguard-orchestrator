@@ -35,7 +35,8 @@ from src.config import PatternType
 # Bumped when a stored report's shape changes. It travels inside the report so a reader pulled
 # out of the results store years later can tell what it is looking at -- which is the whole
 # point of Journey 3 (audit-defence lookup).
-SCHEMA_VERSION = "2.0"
+# 2.1: Candidate.subgraph (v2 graph evidence). Additive and optional, so a 2.0 report still reads.
+SCHEMA_VERSION = "2.1"
 
 RiskLevel = Literal["high", "medium", "low"]
 # A report may additionally be rated "none": a clean month is a real, valid answer, not the
@@ -45,6 +46,26 @@ Tier = Literal["statute", "regulation", "guidance"]
 Authority = Literal["binding", "illustrative"]
 ExtractionMethod = Literal["deterministic", "llm_fallback"]
 FindingStatus = Literal["pending_review", "cleared", "escalated", "approved", "needs_review"]
+PaymentKind = Literal[
+    "cash_deposit", "cash_withdrawal", "cross_border", "ach", "cheque", "card", "wire", "other"
+]
+
+# The one place a free-text instrument becomes a kind a detector can key on. Deposit-send reads
+# `cash_deposit` in and a transfer out; everything else reads nothing here, so an unknown
+# spelling degrades to "other" rather than to a wrong kind.
+_PAYMENT_KINDS: dict[str, PaymentKind] = {
+    "cash deposit": "cash_deposit",
+    "cash withdrawal": "cash_withdrawal",
+    "cross-border": "cross_border",
+    "cross border": "cross_border",
+    "ach": "ach",
+    "cheque": "cheque",
+    "check": "cheque",
+    "credit card": "card",
+    "debit card": "card",
+    "card": "card",
+    "wire": "wire",
+}
 
 
 # =============================================================================================
@@ -94,6 +115,10 @@ class TransactionRecord(BaseModel):
     @property
     def is_cross_border(self) -> bool:
         return self.sender_country != self.receiver_country
+
+    @property
+    def payment_kind(self) -> PaymentKind:
+        return _PAYMENT_KINDS.get(" ".join(self.instrument.lower().split()), "other")
 
 
 class QuarantinedMessage(BaseModel):
@@ -148,6 +173,10 @@ class Candidate(BaseModel):
     member_txn_refs: list[str] = Field(min_length=1)
     attributes: dict[str, Any] = Field(default_factory=dict)
     detection_confidence: float = Field(ge=0.0, le=1.0)
+    # LLD v2: the money-flow structure that matched -- `{"nodes": [...], "edges": [{ref, source,
+    # target, amount, timestamp, payment_kind}]}` -- so a reviewer sees the shape, not a flat list.
+    # Built by the GraphEngine from the member transactions, never by the model.
+    subgraph: dict[str, Any] | None = None
 
     @field_validator("member_txn_refs")
     @classmethod
@@ -384,6 +413,9 @@ class AgentState(TypedDict, total=False):
     run_id: str
     period: str
     records: list[TransactionRecord]
+    # The GraphEngine's view of `records`, built once by GraphBuildNode. Typed loosely because
+    # models.py sits below detection in the import graph; it is a `BatchGraph`. Never traced.
+    batch_graph: Any
     candidates: list[Candidate]
     current_index: int
     retrieval: RetrievalResult | None
@@ -414,6 +446,7 @@ def initial_state(
         run_id=run_id,
         period=period,
         records=records,
+        batch_graph=None,
         candidates=[],
         current_index=0,
         retrieval=None,

@@ -15,6 +15,9 @@ from pypdf import PdfReader
 from src.utils.pdf_generator import (
     PROFILES,
     CHAINED,
+    COMPONENT,
+    MIN_CLUSTER_OF,
+    components,
     LABELS_PATH,
     LEDGER_DIR,
     MAX_FLAGGED_SHARE,
@@ -176,6 +179,16 @@ def test_every_flagged_typology_forms_a_detectable_pattern(labels):
 
         if shape == CHAINED:
             assert len(group) >= 3, f"{log_file}: {typology} is not a walkable chain"
+            continue
+
+        if shape == COMPONENT:
+            # A structure, not a run on one account: each planted cluster must be connected and
+            # at least as large as its typology's smallest complete instance.
+            minimum = MIN_CLUSTER_OF.get(typology, 3)
+            for cluster, rows in group.groupby("Cluster"):
+                sizes = [len(c) for c in components(rows)]
+                assert len(sizes) == 1, f"{log_file}: {cluster} is {len(sizes)} disconnected pieces"
+                assert sizes[0] >= minimum, f"{log_file}: {cluster} has {sizes[0]} wire(s)"
             continue
 
         run = max(

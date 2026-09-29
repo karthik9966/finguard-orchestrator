@@ -38,6 +38,8 @@ from pydantic import ValidationError
 
 from src.config import get_config, get_settings
 from src.detection.base import detect_all
+from src.detection import evidence
+from src.detection.graph_engine import build_graph
 from src.graph import prompts
 from src.models import (
     AgentState,
@@ -140,6 +142,32 @@ def finding_id(state: AgentState, candidate: Candidate) -> str:
     return f"f-{state['run_id']}:{candidate.candidate_id}"
 
 
+# --- 0. graph build -----------------------------------------------------------------------
+
+
+class GraphBuildNode:
+    """Build the batch's money-flow graph once, before any detector runs (LLD v2 §5.1 step 3b).
+
+    Its own node rather than a line inside detection so the graph is a stage of the run a trace
+    can see -- and so the build cost, the one v2 adds, is timed separately from detection's.
+    No model; a clean batch passes through here exactly as it would without it.
+    """
+
+    name = "graph_build"
+
+    def __init__(self, builder=build_graph) -> None:
+        self._build = builder
+
+    def __call__(self, state: AgentState) -> dict[str, Any]:
+        batch = self._build(state["records"])
+        log.info(
+            "graph_build: %d account(s), %d transaction(s)",
+            batch.graph.number_of_nodes(),
+            batch.graph.number_of_edges(),
+        )
+        return {"batch_graph": batch}
+
+
 # --- 1. detection -------------------------------------------------------------------------
 
 
@@ -157,7 +185,7 @@ class DetectionNode:
         self._detect = detector
 
     def __call__(self, state: AgentState) -> dict[str, Any]:
-        candidates = self._detect(state["records"])
+        candidates = self._detect(state.get("batch_graph") or state["records"])
         log.info(
             "detection: %d candidate(s) over %d record(s)", len(candidates), len(state["records"])
         )
@@ -596,9 +624,10 @@ class ReportGenerationNode:
 
         if not findings:
             lines += [
-                f"{records} transaction(s) were screened for the five monitored typologies "
-                "(structuring, fan-in, fan-out, cycle, scatter-gather). No qualifying pattern was "
-                "found, so no obligation was engaged and no model was consulted.",
+                f"{records} transaction(s) were screened for the nine monitored typologies "
+                "(structuring, fan-in, fan-out, cycle, scatter-gather, gather-scatter, "
+                "deposit-send, layered fan-in/out, bipartite). No qualifying pattern was found, so "
+                "no obligation was engaged and no model was consulted.",
             ]
             if quarantined:
                 lines += [
@@ -643,6 +672,8 @@ class ReportGenerationNode:
                 "",
                 f"### {candidate.pattern_type} -- {finding.risk_level} risk "
                 f"({finding.status}, confidence {finding.confidence:.2f})",
+                "",
+                evidence.describe(candidate),
                 "",
                 f"{len(candidate.member_txn_refs)} transaction(s); "
                 f"detection confidence {candidate.detection_confidence:.2f}.",

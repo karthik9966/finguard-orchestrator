@@ -1,7 +1,7 @@
 """The detector interface and its registry (LLD §2.4).
 
 A registry rather than a hardcoded list so `precedence_order` in config.yaml is the single place
-that knows about all five typologies. A detector added without an entry there fails at startup
+that knows about all nine typologies. A detector added without an entry there fails at startup
 rather than being silently reconciled last.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from src.config import PatternType, get_config
-from src.detection.graph_builder import BatchGraph, build_graph
+from src.detection.graph_engine import BatchGraph, build_graph
 from src.models import Candidate, TransactionRecord
 
 DETECTORS: dict[str, "BaseDetector"] = {}
@@ -58,8 +58,14 @@ def register(detector: BaseDetector) -> BaseDetector:
     return detector
 
 
-def detect_all(records: list[TransactionRecord], *, reconcile: bool = True) -> list[Candidate]:
-    """Run every registered detector over one batch, then reconcile.
+def detect_all(
+    batch: BatchGraph | list[TransactionRecord], *, reconcile: bool = True
+) -> list[Candidate]:
+    """Run every registered detector over one batch graph, then reconcile.
+
+    Takes the graph `GraphBuildNode` already built (LLD v2 §5.1 step 3b). A plain record list is
+    still accepted, and built here, for callers outside the agent graph -- the eval runners and
+    the detector tests -- which have no graph node to build it for them.
 
     Reconciliation is on by default because it is not hygiene: `fan_out` fires on the first leg
     of every `scatter_gather`, so without it the same transactions are reported twice under
@@ -70,12 +76,17 @@ def detect_all(records: list[TransactionRecord], *, reconcile: bool = True) -> l
     from src.detection import fan_out as _fan_out  # noqa: F401
     from src.detection import cycle as _cycle  # noqa: F401
     from src.detection import scatter_gather as _scatter_gather  # noqa: F401
+    from src.detection import gather_scatter as _gather_scatter  # noqa: F401
+    from src.detection import deposit_send as _deposit_send  # noqa: F401
+    from src.detection import layered_fan as _layered_fan  # noqa: F401
+    from src.detection import bipartite as _bipartite  # noqa: F401
     from src.detection.reconciler import CandidateReconciler
 
-    if not records:
+    if not isinstance(batch, BatchGraph):
+        batch = build_graph(batch)
+    if not batch.records:
         return []
 
-    batch = build_graph(records)
     found: list[Candidate] = []
     for pattern in get_config().detection.precedence_order:
         detector = DETECTORS.get(pattern)
@@ -83,4 +94,10 @@ def detect_all(records: list[TransactionRecord], *, reconcile: bool = True) -> l
             raise RuntimeError(f"precedence_order names {pattern!r}, which no detector registers")
         found.extend(detector.detect(batch))
 
-    return CandidateReconciler().reconcile(found) if reconcile else found
+    kept = CandidateReconciler().reconcile(found) if reconcile else found
+    # Evidence is attached after reconciliation, to the survivors only, and by the engine rather
+    # than by each detector -- so every finding's structure is drawn the same way (LLD v2 §3.1).
+    return [
+        candidate.model_copy(update={"subgraph": batch.subgraph(candidate.member_txn_refs)})
+        for candidate in kept
+    ]

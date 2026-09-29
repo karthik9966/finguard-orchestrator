@@ -37,6 +37,7 @@ from src.graph.nodes import (
     DetectionNode,
     GroundingNode,
     ReportGenerationNode,
+    GraphBuildNode,
     RetrievalNode,
     route_after_critic,
     route_after_detection,
@@ -46,13 +47,14 @@ from src.observability import TRACE_TAG
 
 def build_graph(
     *,
+    graph_build: Any = None,
     detection: Any = None,
     retrieval: Any = None,
     grounding: Any = None,
     critic: Any = None,
     report: Any = None,
 ):
-    """Compile the five-node auditor.
+    """Compile the six-node auditor.
 
     Every node is injectable. Not for elegance: the suite must exercise the per-candidate loop,
     the faithfulness veto and the clean path without a key or a network, and those are properties
@@ -60,13 +62,15 @@ def build_graph(
     """
     graph = StateGraph(AgentState)
 
+    graph.add_node("graph_build", graph_build or GraphBuildNode())
     graph.add_node("detection", detection or DetectionNode())
     graph.add_node("retrieval", retrieval or RetrievalNode())
     graph.add_node("grounding", grounding or GroundingNode())
     graph.add_node("critic", critic or CriticNode())
     graph.add_node("report", report or ReportGenerationNode())
 
-    graph.add_edge(START, "detection")
+    graph.add_edge(START, "graph_build")
+    graph.add_edge("graph_build", "detection")
     # A clean batch never constructs a model or opens the vector store.
     graph.add_conditional_edges(
         "detection", route_after_detection, {"retrieval": "retrieval", "report": "report"}

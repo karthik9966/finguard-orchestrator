@@ -325,5 +325,6 @@ def test_a_real_run_records_what_it_ingested(api, monkeypatch, store):
     assert job["status"] == "complete", job.get("error")
 
     validation = api.validation(job["report"]["report_id"])
-    assert validation is not None and validation.parsed == 500
+    declared = BATCH.read_text().count("{1:F01")
+    assert validation is not None and validation.parsed == declared > 0
     assert isinstance(validation.declared, int)

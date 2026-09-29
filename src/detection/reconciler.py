@@ -1,8 +1,8 @@
 """`CandidateReconciler` -- one shape per set of transactions (LLD §2.4).
 
-**Load-bearing, not hygiene.** `fan_out` fires on the first leg of every `scatter_gather`, and on
-several typologies PRD §2 puts out of scope -- gather-scatter, layered fan-out, bipartite. Left
-alone, the same transactions are reported twice: once under the shape that explains them and once
+**Load-bearing, not hygiene.** `fan_out` fires on the first leg of every `scatter_gather`, and the
+two fans fire inside every v2 structure -- a layered funnel's branches, a gather-scatter's halves, a
+bipartite block's senders. Left alone, the same transactions are reported twice: once under the shape that explains them and once
 under a shape that only sees half of it. The model is then asked to ground both, and a reviewer
 reads two findings about one event.
 

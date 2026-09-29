@@ -19,6 +19,7 @@ from src.utils.swift_parser import (
     MalformedMessage,
     existing_log,
     country_of,
+    instruction_type,
     parse_amount,
     parse_batch,
     parse_message,
@@ -148,6 +149,22 @@ def test_message_parses_to_the_expected_wire():
     assert wire.charge_code == "SHA"
     assert wire.memo == "/RFB/LOAN REPAYMENT"
     assert wire.uetr == "5e44476b-41c4-4c82-8efc-ff2b56db21aa"
+
+
+@pytest.mark.parametrize(
+    ("instruction", "expected"),
+    [
+        ("/INS/CASH DEPOSIT 04:22:05", "CASH DEPOSIT"),
+        ("/INS/CASH WITHDRAWAL 17:01:44", "CASH WITHDRAWAL"),
+        ("/INS/CROSS-BORDER 09:00:00", "CROSS-BORDER"),
+        ("/INS/CHEQUE 04:22:05", "CHEQUE"),
+        ("no instruction code here", ""),
+    ],
+)
+def test_the_whole_payment_type_survives(instruction, expected):
+    """Taking only the first word made deposits and withdrawals both "CASH" -- the one
+    distinction deposit-send is detected on."""
+    assert instruction_type(instruction) == expected
 
 
 def test_country_comes_from_the_bic_since_no_field_carries_it():

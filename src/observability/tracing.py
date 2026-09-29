@@ -48,6 +48,11 @@ TRACE_TAG = "AML_AUDIT_RUN"
 # about a 500-record list a trace reader wants.
 TRACE_SUMMARISE = frozenset({"records", "wires", "transactions"})
 
+# Keys whose value is never sent in any form. The batch graph holds every record *and* a frame of
+# them, so it is the ledger twice over; a trace learns nothing from it that `graph_build`'s span
+# count does not already say.
+TRACE_OMIT = frozenset({"batch_graph"})
+
 # Any other list longer than this is truncated with a note. A cap rather than a drop, because the
 # first few entries of an unexpected list are usually what makes a trace readable, and the point is
 # to bound the payload rather than to hide it.
@@ -67,7 +72,9 @@ def trim(value: Any) -> Any:
     if isinstance(value, dict):
         trimmed: dict[str, Any] = {}
         for key, item in value.items():
-            if str(key).lower() in TRACE_SUMMARISE and isinstance(item, (list, tuple)):
+            if str(key).lower() in TRACE_OMIT:
+                trimmed[str(key)] = "[batch graph -- omitted from the trace]"
+            elif str(key).lower() in TRACE_SUMMARISE and isinstance(item, (list, tuple)):
                 trimmed[str(key)] = f"[{len(item)} record(s) -- omitted from the trace]"
             else:
                 trimmed[str(key)] = trim(item)

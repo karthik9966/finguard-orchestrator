@@ -67,7 +67,7 @@ def recall_against_baseline() -> list[Metric]:
     for instance in instances:
         by_batch.setdefault(instance.batch, []).append(instance)
 
-    found = baseline_found = 0
+    found = named = baseline_found = 0
     swept_total = baseline_total = records_total = 0
     per_pattern: dict[str, dict[str, int]] = {}
     missed: list[str] = []
@@ -76,16 +76,27 @@ def recall_against_baseline() -> list[Metric]:
         records, _ = _records(corpora.EVAL_LEDGER / batch)
         records_total += len(records)
 
-        swept = {ref for c in detect_all(records) for ref in c.member_txn_refs}
+        candidates = detect_all(records)
+        swept = {ref for c in candidates for ref in c.member_txn_refs}
         swept_total += len(swept)
         alerted = run_baseline(records).flagged_refs
         baseline_total += len(alerted)
 
         for instance in group:
             tally = per_pattern.setdefault(
-                instance.pattern_type, {"found": 0, "baseline": 0, "total": 0}
+                instance.pattern_type, {"found": 0, "named": 0, "baseline": 0, "total": 0}
             )
             tally["total"] += 1
+            # Named: found by a candidate *of this pattern*. The pattern-level figure counts any
+            # candidate that covers the instance, which is what the reviewer sees; this one is
+            # whether the right detector saw it, which is what PRD v2's per-pattern KPI asks.
+            named_refs = {
+                ref for c in candidates if c.pattern_type == instance.pattern_type
+                for ref in c.member_txn_refs
+            }
+            if instance.found_by(named_refs):
+                named += 1
+                tally["named"] += 1
             if instance.found_by(swept):
                 found += 1
                 tally["found"] += 1
@@ -96,12 +107,26 @@ def recall_against_baseline() -> list[Metric]:
                 tally["baseline"] += 1
 
     total = len(instances)
+    weakest = min(per_pattern, key=lambda p: per_pattern[p]["found"] / per_pattern[p]["total"])
     return [
         Metric(
             "recall (pattern level)", found / total, 0.90,
             detail={
                 "found": found, "instances": total, "missed": missed,
                 "per_pattern": per_pattern,
+            },
+        ),
+        # Eval Design v2 §4: ">= 0.90 each", so a weak detector cannot hide behind a strong one.
+        Metric(
+            "recall (weakest pattern)",
+            per_pattern[weakest]["found"] / per_pattern[weakest]["total"], 0.90,
+            detail={"pattern": weakest, **per_pattern[weakest]},
+        ),
+        Metric(
+            "recall (named pattern)", named / total, None,
+            detail={
+                "named": named, "instances": total,
+                "per_pattern": {p: f"{t['named']}/{t['total']}" for p, t in per_pattern.items()},
             },
         ),
         Metric(

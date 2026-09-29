@@ -16,7 +16,7 @@ import pytest
 from src.config import PATTERN_TYPES, get_config
 from src.detection import detect_all
 from src.detection.confidence import coefficient_of_variation, score
-from src.detection.graph_builder import build_graph
+from src.detection.graph_engine import build_graph
 from src.detection.reconciler import CandidateReconciler
 from src.ingestion.batch import TransactionBatchIngestor
 from src.models import Candidate, TransactionRecord
@@ -30,13 +30,17 @@ needs_ledger = pytest.mark.skipif(
 T0 = datetime(2023, 6, 1, 9, 0, tzinfo=timezone.utc)
 
 
-def record(ref, sender, receiver, amount, day=0, hour=0) -> TransactionRecord:
+def record(ref, sender, receiver, amount, day=0, hour=0, instrument="WIRE") -> TransactionRecord:
     return TransactionRecord(
         txn_ref=ref, sender_account=sender, receiver_account=receiver,
         amount=Decimal(str(amount)), currency="USD",
         timestamp=T0 + timedelta(days=day, hours=hour),
-        sender_country="US", receiver_country="US", instrument="WIRE",
+        sender_country="US", receiver_country="US", instrument=instrument,
     )
+
+
+def only(pattern, records):
+    return [c for c in detect_all(records) if c.pattern_type == pattern]
 
 
 # --- the shared graph --------------------------------------------------------------------
@@ -240,7 +244,7 @@ def test_detector_level_recall_clears_the_bar():
     ingestor = TransactionBatchIngestor(fallback=lambda failure: None)
     found = planted = 0
     for log, group in labels.groupby("Log_file"):
-        if len(group) > 1_000:
+        if len(group) > 5_000:
             continue  # the 10k batch is timed separately; recall is measured on the dev set
         records, _ = ingestor.ingest([LEDGER / log.replace(".pdf", ".txt")])
         swept = {ref for c in detect_all(records) for ref in c.member_txn_refs}
@@ -290,3 +294,132 @@ def test_candidate_ids_are_stable_across_runs():
     )
     first = {c.candidate_id for c in detect_all(records)}
     assert first == {c.candidate_id for c in detect_all(records)}
+
+
+# --- v2: gather-scatter ------------------------------------------------------------------------
+
+
+def gather_scatter_hub(out_amount=4000, spread_days=1):
+    rules = get_config().detection.gather_scatter
+    records = [record(f"GI{i}", f"SRC{i}", "HUB", 4000, day=i * spread_days) for i in range(rules.min_in)]
+    records += [
+        record(f"GO{i}", "HUB", f"DST{i}", out_amount, day=rules.min_in * spread_days + i)
+        for i in range(rules.min_out)
+    ]
+    return records
+
+
+def test_a_hub_that_fills_then_empties_is_gather_scatter_not_two_fans():
+    (found,) = only("gather_scatter", gather_scatter_hub())
+    assert found.attributes["hub"] == "HUB" and found.attributes["conservation"] == 1.0
+    # The reconciler must not also report the halves.
+    assert not only("fan_in", gather_scatter_hub()) and not only("fan_out", gather_scatter_hub())
+
+
+def test_a_hub_that_keeps_the_money_is_not_a_pass_through():
+    assert not only("gather_scatter", gather_scatter_hub(out_amount=500))
+
+
+def test_gather_scatter_spread_beyond_its_window_does_not_fire():
+    window = get_config().detection.gather_scatter.window_days
+    assert not only("gather_scatter", gather_scatter_hub(spread_days=window))
+
+
+# --- v2: deposit-send --------------------------------------------------------------------------
+
+
+def test_cash_in_then_the_same_amount_wired_out_is_deposit_send():
+    records = [
+        record("D1", "CUST", "MULE", 9500, instrument="CASH DEPOSIT"),
+        record("S1", "MULE", "OFFSHORE", 9540, hour=30, instrument="CROSS-BORDER"),
+    ]
+    (found,) = only("deposit_send", records)
+    assert found.member_txn_refs == ["D1", "S1"]
+    assert found.attributes["cross_border"] is True
+
+
+@pytest.mark.parametrize(
+    ("instrument", "amount", "hours"),
+    [
+        ("CASH WITHDRAWAL", 9540, 30),   # a withdrawal is not a deposit -- the P2 parser fix
+        ("CASH DEPOSIT", 4000, 30),      # timing alone: the amounts do not match
+        ("CASH DEPOSIT", 9540, 24 * 10), # the match, but far outside the window
+    ],
+)
+def test_deposit_send_needs_a_deposit_a_matching_amount_and_the_window(instrument, amount, hours):
+    records = [
+        record("D1", "CUST", "MULE", 9500, instrument=instrument),
+        record("S1", "MULE", "OFFSHORE", amount, hour=hours, instrument="CROSS-BORDER"),
+    ]
+    assert not only("deposit_send", records)
+
+
+def test_one_send_cannot_be_claimed_by_two_deposits():
+    records = [
+        record("D1", "C1", "MULE", 9500, instrument="CASH DEPOSIT"),
+        record("D2", "C2", "MULE", 9500, hour=1, instrument="CASH DEPOSIT"),
+        record("S1", "MULE", "X", 9500, hour=5, instrument="ACH"),
+    ]
+    (found,) = only("deposit_send", records)
+    assert found.attributes["pairs"] == 1
+
+
+# --- v2: layered fan ---------------------------------------------------------------------------
+
+
+def layered(direction="in"):
+    records, n = [], 0
+    for c in range(3):
+        for leaf in range(3):
+            n += 1
+            leg = (f"L{c}{leaf}", f"C{c}") if direction == "in" else (f"C{c}", f"L{c}{leaf}")
+            records.append(record(f"LF{n}", *leg, 3000, day=leaf))
+        top = (f"C{c}", "ROOT") if direction == "in" else ("ROOT", f"C{c}")
+        records.append(record(f"LT{c}", *top, 9000, day=5))
+    return records
+
+
+@pytest.mark.parametrize("direction", ["in", "out"])
+def test_funnels_feeding_one_root_are_a_layered_fan(direction):
+    (found,) = only("layered_fan", layered(direction))
+    assert found.attributes["direction"] == direction
+    assert found.attributes["collectors"] == ["C0", "C1", "C2"]
+    assert len(found.member_txn_refs) == 12
+    # The collectors' own fans are absorbed rather than reported beside it.
+    assert not only("fan_in", layered(direction)) and not only("fan_out", layered(direction))
+
+
+def test_a_single_level_fan_is_not_layered():
+    records = [record(f"F{i}", f"S{i}", "ROOT", 3000, day=i) for i in range(8)]
+    assert not only("layered_fan", records)
+
+
+# --- v2: bipartite -----------------------------------------------------------------------------
+
+
+def block(prefix, senders, receivers, day=0):
+    return [
+        record(f"{prefix}{s}{r}", s, r, 5000, day=day)
+        for s in senders for r in receivers
+    ]
+
+
+def test_senders_sharing_their_receivers_are_bipartite():
+    (found,) = only("bipartite", block("B", ["S1", "S2"], [f"R{i}" for i in range(6)]))
+    assert found.attributes["stacked"] is False and found.attributes["density"] == 1.0
+
+
+def test_a_block_handed_on_to_a_second_block_is_one_stacked_candidate():
+    first = block("A", ["S1", "S2"], ["M1", "M2", "M3", "M4"])
+    second = block("Z", ["M1", "M2"], ["E1", "E2", "E3", "E4"], day=3)
+    (found,) = only("bipartite", first + second)
+    assert found.attributes["stacked"] is True and found.attributes["layers"] == 2
+
+
+# --- v2: evidence ------------------------------------------------------------------------------
+
+
+def test_every_surviving_candidate_carries_its_subgraph():
+    for candidate in detect_all(layered("in") + gather_scatter_hub()):
+        edges = candidate.subgraph["edges"]
+        assert [e["ref"] for e in edges] == candidate.member_txn_refs
