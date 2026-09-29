@@ -32,9 +32,6 @@ from pypdf import PdfReader
 
 from src.config import get_config
 from src.ingestion.chunker import (
-    DEFAULT_PERCENTILE,
-    MAX_CHARS,
-    MIN_CHARS,
     chunk_semantic,
     normalize,
     split_by_section,
@@ -52,12 +49,10 @@ REGULATIONS = DATA_DIR / "raw" / "regulations"
 OBLIQA_DOCS = REGULATIONS / "obliqa" / "StructuredRegulatoryDocuments"
 CHUNK_DIR = DATA_DIR / "processed" / "chunks"
 
-# Passages this short are headings or numbering artefacts, not retrievable content.
-# Value now lives in config.yaml (LLD §8). Shim for the migration -- Phase 5 deletes it.
-MIN_PASSAGE_CHARS = get_config().chunking.min_passage_chars
-# Below this a chunk is a fragment like "(c) enquire into the background..."; prefixing the
-# document and clause makes it self-describing without changing its citation.
-CONTEXT_PREFIX_BELOW = get_config().chunking.context_prefix_below
+# Both chunking floors are read from config.yaml at call time (LLD §8): a passage shorter than
+# `min_passage_chars` is a heading or a numbering artefact rather than retrievable content, and one
+# shorter than `context_prefix_below` is a fragment like "(c) enquire into the background..." that
+# gets the document and clause prefixed so it is self-describing without changing its citation.
 
 # Tiers from the §3.2 corpus analysis: only 2.9% of ObliQA passages are AML-bearing and 62% of
 # those sit in Document 1. Tier 3 is kept indexed as the distractor set that makes §8.1 Context
@@ -162,7 +157,7 @@ def tier_for(document_id: int) -> int:
 def is_bare_heading(text: str) -> bool:
     """True for numbering stubs and all-caps section titles carrying no obligation."""
     stripped = text.strip()
-    return len(stripped) < MIN_PASSAGE_CHARS
+    return len(stripped) < get_config().chunking.min_passage_chars
 
 
 def context_prefix(document_title: str, section_clause: str) -> str:
@@ -186,13 +181,13 @@ def obliqa_chunks(encode, *, percentile: float) -> Iterator[dict]:
             clause = strip_invisibles(passage["PassageID"]).strip()
 
             pieces = chunk_semantic(
-                raw, encode, percentile=percentile, min_chars=MIN_CHARS, max_chars=MAX_CHARS
+                raw, encode, percentile=percentile
             )
             multi = len(pieces) > 1
             for index, text in enumerate(pieces, start=1):
                 if not text.strip():
                     continue
-                if len(text) < CONTEXT_PREFIX_BELOW:
+                if len(text) < get_config().chunking.context_prefix_below:
                     text = context_prefix(title, clause) + text
                 suffix = f"#{index}" if multi else ""
                 # (DocumentID, PassageID) is NOT unique: 17 keys collide across 44 passages
@@ -248,7 +243,7 @@ def pdf_chunks(encode, *, percentile: float) -> Iterator[dict]:
         pages = [page.extract_text() or "" for page in PdfReader(path).pages]
         text = normalize(_BULLET_ARTEFACT.sub("", strip_page_furniture(pages)))
         pieces = chunk_semantic(
-            text, encode, percentile=percentile, min_chars=MIN_CHARS, max_chars=MAX_CHARS
+            text, encode, percentile=percentile
         )
         for index, piece in enumerate(pieces, start=1):
             yield {
@@ -279,7 +274,7 @@ def finra_rule_chunks(encode, *, percentile: float) -> Iterator[dict]:
         )
         text = normalize(strip_provenance_header(path.read_text()))
         pieces = chunk_semantic(
-            text, encode, percentile=percentile, min_chars=MIN_CHARS, max_chars=MAX_CHARS
+            text, encode, percentile=percentile
         )
         for index, piece in enumerate(pieces, start=1):
             yield {
@@ -371,7 +366,7 @@ def us_corpus_chunks(encode, *, percentile: float) -> Iterator[dict]:
                 text, fallback_heading=meta.get("note", source_id)[:60]
             )
             parts = chunk_semantic(
-                prose, encode, percentile=percentile, min_chars=MIN_CHARS, max_chars=MAX_CHARS,
+                prose, encode, percentile=percentile,
             )
             pieces += [
                 (f"part {index} of {len(parts)}", piece)
@@ -412,7 +407,7 @@ def rules_path(backend_name: str) -> Path:
     return CHUNK_DIR / f"rules-{backend_name}.jsonl"
 
 
-def build_rules(backend_name: str, *, percentile: float = DEFAULT_PERCENTILE) -> Path:
+def build_rules(backend_name: str, *, percentile: float | None = None) -> Path:
     """Chunk the citable US corpus into its own file.
 
     Separate from :func:`build` rather than folded into it: that one feeds the `regulations`
@@ -443,7 +438,7 @@ def build_rules(backend_name: str, *, percentile: float = DEFAULT_PERCENTILE) ->
     return dest
 
 
-def build(backend_name: str, *, percentile: float = DEFAULT_PERCENTILE) -> Path:
+def build(backend_name: str, *, percentile: float | None = None) -> Path:
     CHUNK_DIR.mkdir(parents=True, exist_ok=True)
     dest = CHUNK_DIR / f"{backend_name}.jsonl"
 
@@ -478,7 +473,8 @@ def build(backend_name: str, *, percentile: float = DEFAULT_PERCENTILE) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--backend", default="minilm", choices=[*BACKENDS, "both"])
-    parser.add_argument("--percentile", type=float, default=DEFAULT_PERCENTILE)
+    parser.add_argument("--percentile", type=float,
+                        default=get_config().chunking.percentile)
     parser.add_argument(
         "--rules", action="store_true",
         help="chunk the citable US corpus for rule_chunks instead of the legacy collection",

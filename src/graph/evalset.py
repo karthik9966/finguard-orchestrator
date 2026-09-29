@@ -9,10 +9,13 @@ since Phase 1 established FINRA publishes no rule PDFs and the ADGM AML Rulebook
 indexed.
 
 Capture is separated from scoring because they fail for different reasons and cost different
-money. Running the pipeline is ~$0.13 a batch; judging its output is a further gpt-4o call per
+money. Running the pipeline costs per candidate; judging its output is a further model call per
 metric per case. Freezing the runs to disk means a prompt change is scored against the same
 evidence twice -- before and after -- rather than against two different runs that also happened to
 retrieve different clauses.
+
+Phase 8 owns the metric set and the nightly gate. What Phase 5 changed here is only the shape of a
+run: the report, and the retrieval context, are now per candidate rather than per batch.
 
 Usage::
 
@@ -79,56 +82,58 @@ def expected_output(truth: dict[str, Any]) -> str:
     )
 
 
-def audit_question(batch: str, state: dict[str, Any]) -> str:
+def audit_question(batch: str, result: Any) -> str:
     """The 'input' the pipeline was given.
 
     Our pipeline takes a batch, not a free-text question -- Decision 3 replaced the auditor's
     query with obligation-shaped templates. So the input is reconstructed as the question the run
     answers, which is what Answer Relevancy needs to judge against.
     """
-    candidates = state.get("candidates") or []
-    shapes = sorted({c.shape for c in candidates})
+    patterns = sorted({f.candidate.pattern_type for f in result.report.findings})
     return (
         f"Audit the transaction batch {batch} for AML compliance. "
-        f"{len(state.get('wires') or [])} wires were parsed and {len(candidates)} candidate "
-        f"patterns were detected ({', '.join(shapes) or 'none'}). "
-        f"Which regulatory obligations apply, and which wires warrant review?"
+        f"{result.records} transactions were parsed and {result.candidates} candidate "
+        f"patterns were detected ({', '.join(patterns) or 'none'}). "
+        f"Which regulatory obligations apply, and which transactions warrant review?"
     )
 
 
 def build_case(batch_path: Path) -> dict[str, Any]:
     """Run the pipeline once and freeze everything a judge needs."""
-    from src.graph.graph import audit_batch
+    from src.graph.run import audit_batch
 
     batch = batch_path.name
-    state = audit_batch(str(batch_path), tags=["EVAL_CAPTURE"])
-    report = state.get("report")
-    if report is None:
-        raise RuntimeError(f"{batch}: the run produced no report")
+    result = audit_batch(batch_path, tags=["EVAL_CAPTURE"])
+    report = result.report
 
     truth = ground_truth(batch)
-    usage = state.get("usage")
+    total = result.usage.total_cost
     return {
         "name": batch,
-        "input": audit_question(batch, state), # type: ignore
-        "actual_output": report.audit_summary,
-        # The clauses the drafter actually saw, in the order it saw them -- Contextual Precision
-        # scores that ordering, so a shuffled copy would measure a different pipeline.
+        "input": audit_question(batch, result),
+        "actual_output": report.summary,
+        # The clauses each finding was actually drafted against, in the order the model saw them --
+        # Contextual Precision scores that ordering, so a shuffled copy measures a different
+        # pipeline. Per candidate now, which is why one batch contributes several blocks.
         "retrieval_context": [
-            f"[{d.metadata.get('document_title')} {d.metadata.get('section_clause')}] "
-            f"{d.page_content}"
-            for d in state.get("retrieved_context", []) # type: ignore
+            f"[{citation.source_id} {citation.section_ref}] {citation.text_excerpt}"
+            for finding in report.findings
+            for citation in finding.applicable_regulations + finding.red_flag_indicators
         ],
         "expected_output": expected_output(truth),
         "ground_truth": truth,
         "run": {
-            "audit_id": state.get("audit_id"),
+            "run_id": result.run_id,
             "risk_rating": report.risk_rating,
-            "flagged_wires": report.flagged_wires,
-            "applicable_regulations": report.applicable_regulations,
-            "confidence_score": state.get("confidence_score"),
-            "loop_count": state.get("loop_count"),
-            "cost_usd": float(usage.total_cost) if usage and usage.total_cost else None,
+            "candidates": result.candidates,
+            "findings": len(report.findings),
+            "needs_review": report.needs_review_count,
+            "flagged_transactions": report.flagged_transactions,
+            "applicable_regulations": [
+                f"{c.source_id} {c.section_ref}" for c in report.source_document_refs
+            ],
+            "cost_usd": float(total) if total is not None else None,
+            "cost_per_candidate_usd": result.cost_per_candidate,
         },
     }
 

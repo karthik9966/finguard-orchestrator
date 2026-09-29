@@ -1,6 +1,7 @@
 """Cycle: money leaving an account and returning through intermediaries.
 
-Ported from `find_paths` (`utils/detectors.py:218`), keeping the two things that made it work.
+Ported from the pre-migration `find_paths` (removed in Phase 5), keeping the two things that
+made it work.
 
 **Counting cannot see this shape.** A ring's edges span as many distinct senders as receivers, so
 no account stands out -- it only exists along the direction of travel.

@@ -27,15 +27,12 @@ import numpy as np
 
 from src.config import get_config
 
-# A chunk shorter than this is usually a stub that retrieves badly on its own; longer than
-# this and the reranker has to carry too much irrelevant text into the prompt.
-# Value now lives in config.yaml (LLD §8). Shim for the migration -- Phase 5 deletes it.
-MIN_CHARS = get_config().chunking.min_chars
-MAX_CHARS = get_config().chunking.max_chars
-DEFAULT_PERCENTILE = get_config().chunking.percentile
-
-# Below this many sentences a percentile is not a statistic, it is noise.
-MIN_SENTENCES_FOR_PERCENTILE = get_config().chunking.min_sentences_for_percentile
+# Every size budget lives in config.yaml (LLD §8) and is read *at call time*, through a `None`
+# default rather than a module constant. The distinction is not stylistic: a module-level
+# `X = get_config().chunking.min_chars` freezes at import, so editing config.yaml and resetting the
+# cache would change nothing and the file would look live while being dead. A chunk shorter than
+# `min_chars` is usually a stub that retrieves badly on its own; longer than `max_chars` and the
+# reranker has to carry too much irrelevant text into the prompt.
 
 Encoder = Callable[[Sequence[str]], np.ndarray]
 
@@ -143,12 +140,13 @@ def has_table(text: str) -> bool:
     return _TABLE_REGION.search(text) is not None
 
 
-def split_table(text: str, *, max_chars: int = MAX_CHARS) -> list[str]:
+def split_table(text: str, *, max_chars: int | None = None) -> list[str]:
     """Split a table region by rows, repeating the header so each chunk stands alone.
 
     The GLO glossary is a single 152k-character passage of ``term<TAB>definition`` rows.
     Semantic distance between "1P" and "1U" tells you nothing; row grouping does.
     """
+    max_chars = get_config().chunking.max_chars if max_chars is None else max_chars
     match = _TABLE_REGION.search(text)
     if match is None:
         return [normalize(text)]
@@ -221,10 +219,13 @@ def assemble(
     sentences: Sequence[str],
     boundaries: set[int],
     *,
-    min_chars: int = MIN_CHARS,
-    max_chars: int = MAX_CHARS,
+    min_chars: int | None = None,
+    max_chars: int | None = None,
 ) -> list[str]:
     """Glue sentences into chunks, honouring boundaries but enforcing the size budget."""
+    chunking = get_config().chunking
+    min_chars = chunking.min_chars if min_chars is None else min_chars
+    max_chars = chunking.max_chars if max_chars is None else max_chars
     chunks: list[str] = []
     current: list[str] = []
 
@@ -259,11 +260,15 @@ def chunk_semantic(
     text: str,
     encode: Encoder,
     *,
-    percentile: float = DEFAULT_PERCENTILE,
-    min_chars: int = MIN_CHARS,
-    max_chars: int = MAX_CHARS,
+    percentile: float | None = None,
+    min_chars: int | None = None,
+    max_chars: int | None = None,
 ) -> list[str]:
     """Split ``text`` at points where adjacent sentences stop being about the same thing."""
+    chunking = get_config().chunking
+    percentile = chunking.percentile if percentile is None else percentile
+    min_chars = chunking.min_chars if min_chars is None else min_chars
+    max_chars = chunking.max_chars if max_chars is None else max_chars
     if has_table(text):
         return split_table(text, max_chars=max_chars)
 
@@ -275,7 +280,8 @@ def chunk_semantic(
     if len(sentences) < 2:
         return _hard_split(text, max_chars)
 
-    if len(sentences) < MIN_SENTENCES_FOR_PERCENTILE:
+    # Below this many sentences a percentile is not a statistic, it is noise.
+    if len(sentences) < chunking.min_sentences_for_percentile:
         boundaries: set[int] = set()
     else:
         boundaries = boundary_indices(adjacent_distances(encode(sentences)), percentile)

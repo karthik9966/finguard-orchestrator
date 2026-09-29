@@ -40,9 +40,6 @@ CHUNK_DIR = PROJECT_ROOT / "data" / "processed" / "chunks"
 PERSIST_DIR = Path(os.environ.get("CHROMA_PERSIST_DIR", PROJECT_ROOT / "chroma_db"))
 COLLECTION_NAME = os.environ.get("CHROMA_COLLECTION", "regulations")
 
-# Value now lives in config.yaml (LLD §8). Shim for the migration -- Phase 5 deletes it.
-UPSERT_BATCH = get_config().ingestion.upsert_batch
-DEFAULT_K = get_config().retrieval.k_indicators
 
 # Chroma stores the text in `documents` and everything else in `metadatas`; these two are not
 # metadata. `passage_uuid` stays -- it is ObliQA's real primary key and worth keeping for tracing.
@@ -121,15 +118,16 @@ def build(backend_name: str = "minilm", *, rebuild: bool = False) -> dict:
         print(f"  embedding {len(records):,} chunks with {backend.model_id} ...")
         vectors = backend.encode([r["text"] for r in records])
 
-        for start in range(0, len(records), UPSERT_BATCH):
-            block = records[start : start + UPSERT_BATCH]
+        batch = get_config().ingestion.upsert_batch
+        for start in range(0, len(records), batch):
+            block = records[start : start + batch]
             collection.upsert(
                 ids=[r["chunk_id"] for r in block],
-                embeddings=vectors[start : start + UPSERT_BATCH].tolist(),
+                embeddings=vectors[start : start + batch].tolist(),
                 documents=[r["text"] for r in block],
                 metadatas=[clean_metadata(r) for r in block],
             )
-            print(f"    upserted {min(start + UPSERT_BATCH, len(records)):>6,}/{len(records):,}")
+            print(f"    upserted {min(start + batch, len(records)):>6,}/{len(records):,}")
 
     return stats()
 
@@ -229,8 +227,9 @@ class VectorStoreClient:
     def upsert(self, records: list[dict], vectors) -> int:
         """Write chunks in batches. ``records`` are RuleChunk-shaped dicts."""
         collection = self._collection(create=True, records=len(records))
-        for start in range(0, len(records), UPSERT_BATCH):
-            block = records[start : start + UPSERT_BATCH]
+        batch = get_config().ingestion.upsert_batch
+        for start in range(0, len(records), batch):
+            block = records[start : start + batch]
             metadatas = []
             for record in block:
                 meta = clean_metadata({**record, "topic_tags": pack_topics(record.get("topic_tags"))})
@@ -239,7 +238,7 @@ class VectorStoreClient:
                 "upsert",
                 lambda block=block, metadatas=metadatas, start=start: collection.upsert(
                     ids=[r["chunk_id"] for r in block],
-                    embeddings=vectors[start : start + UPSERT_BATCH].tolist(),
+                    embeddings=vectors[start : start + batch].tolist(),
                     documents=[r["text"] for r in block],
                     metadatas=metadatas,
                 ),
@@ -438,7 +437,7 @@ def by_id(chunk_ids: list[str]) -> dict[str, dict]:
     """Fetch stored chunks by id -- the lookup §6.4's citations drawer needs.
 
     ``retrieve`` searches by vector and is the wrong tool here: the drawer already knows exactly
-    which clauses to show, because ``generate_node`` derived ``source_document_hashes`` from the
+    which clauses to show, because report generation derived the cited clause ids from the
     retrieved set in Python rather than trusting the model to report them. Re-searching would
     risk returning a *different* clause than the one the report was actually grounded in, which
     defeats the entire purpose of an audit trail.
@@ -464,7 +463,7 @@ def by_id(chunk_ids: list[str]) -> dict[str, dict]:
 def retrieve(
     query: str,
     *,
-    k: int = DEFAULT_K,
+    k: int | None = None,
     tiers: list[int] | None = None,
     backend_name: str | None = None,
 ) -> list[dict]:
@@ -476,6 +475,7 @@ def retrieve(
     facts ranked it 315th -- rulebooks are written as duties, so descriptions of events share
     no register with them.
     """
+    k = get_config().retrieval.k_indicators if k is None else k
     client = _client()
     collection = client.get_collection(COLLECTION_NAME)
     built_with = collection.metadata.get("backend")
@@ -569,7 +569,7 @@ def main() -> int:
     )
     parser.add_argument("--query", help="run a retrieval and print the hits")
     parser.add_argument("--tier", type=int, nargs="*", default=None)
-    parser.add_argument("-k", type=int, default=DEFAULT_K)
+    parser.add_argument("-k", type=int, default=get_config().retrieval.k_indicators)
     args = parser.parse_args()
 
     try:

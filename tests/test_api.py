@@ -1,49 +1,66 @@
-"""The HTTP surface (§10).
+"""The HTTP surface (LLD §10).
 
-The graph itself is stubbed: these tests are about the contract -- what a caller gets back, when,
-and what happens when the upload or the corpus is wrong. No API key, no network.
+The run itself is stubbed: these tests are about the contract -- what a caller gets back, when, and
+what happens when the upload or the corpus is wrong. No API key, no network.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from src.api import main
-from src.graph.state import ComplianceReport
+from src.graph.run import BatchUnreadable, RunResult
+from src.graph.cost import UsageLedger
+from src.models import ComplianceReport, ValidationReport
 
 LEDGER = Path(__file__).resolve().parents[1] / "data" / "processed" / "ledger"
 BATCH = LEDGER / "2023-06_private_banking_log.txt"
 needs_ledger = pytest.mark.skipif(not BATCH.exists(), reason="run: uv run finguard-ledger")
 
 REPORT = ComplianceReport(
-    risk_rating="Medium",
-    flagged_wires=["FGO23060100001"],
-    applicable_regulations=["AML Rulebook 14.2.3.Guidance.1."],
-    audit_summary="## Findings",
-    source_document_hashes=["obliqa:1:14.2.3.Guidance.1.:a3f9c210"],
+    report_id="rep-run-stub",
+    run_id="run-stub",
+    period="2023-06",
+    generated_at=datetime(2026, 9, 28, tzinfo=timezone.utc),
+    risk_rating="none",
+    clean=True,
+    summary="## Compliance review -- 2023-06",
 )
 
 
 @pytest.fixture(autouse=True)
 def clean_registry():
     main.AUDITS.clear()
+    main.REPORTS.reports.clear()
     yield
     main.AUDITS.clear()
+    main.REPORTS.reports.clear()
+
+
+def stub_result(report=REPORT, *, candidates=2, run_id="run-stub") -> RunResult:
+    return RunResult(
+        report=report, validation=ValidationReport(parsed=500), usage=UsageLedger(),
+        run_id=run_id, candidates=candidates, records=500,
+    )
 
 
 @pytest.fixture
 def client(monkeypatch):
-    """A graph that returns instantly, so the contract is tested rather than the model."""
-    class StubGraph:
-        def invoke(self, state, config=None):
-            return {"report": REPORT, "confidence_score": 0.9, "loop_count": 1}
+    """A run that returns instantly, so the contract is tested rather than the model."""
+    def stub_audit(path, *, run_id=None, store=None, tags=None, **kwargs):
+        report = REPORT.model_copy(update={"run_id": run_id, "report_id": f"rep-{run_id}"})
+        if store is not None:
+            store.save(report)
+        return stub_result(report, run_id=run_id or "run-stub")
 
-    monkeypatch.setattr(main, "build_graph", lambda: StubGraph())
-    monkeypatch.setattr(main, "stats", lambda: {
-        "vectors": 12273, "collection": "regulations", "backend": "minilm",
+    monkeypatch.setattr(main, "audit_batch", stub_audit)
+    monkeypatch.setattr(main, "counts", lambda: {
+        "total": 731, "tier": {"statute": 12, "regulation": 219, "guidance": 500},
+        "authority": {"binding": 231, "illustrative": 500},
     })
     # TestClient runs background tasks synchronously on response, so a poll right after the POST
     # already sees the finished audit.
@@ -54,16 +71,18 @@ def client(monkeypatch):
 
 
 def test_health_reports_the_corpus_it_would_actually_query(client):
+    """Probed against `rule_chunks` -- the collection the retriever really reads, not whichever
+    collection an environment variable happens to name."""
     body = client.get("/health").json()
-    assert body["status"] == "ok" and body["vectors"] == 12273
+    assert body["status"] == "ok" and body["vectors"] == 731
+    assert body["collection"] == "rule_chunks"
+    assert body["by_authority"]["binding"] == 231
 
 
 def test_health_fails_when_the_collection_is_empty(client, monkeypatch):
-    """A 200 from a service with no vectors sends every audit into a retrieval that returns
-    nothing -- which audit_node refuses outright. Better to fail at the probe."""
-    monkeypatch.setattr(main, "stats", lambda: {
-        "vectors": 0, "collection": "regulations", "backend": "minilm",
-    })
+    """A 200 from a service with no vectors sends every candidate to needs_review one paid call at
+    a time, which is the expensive way to discover an empty collection."""
+    monkeypatch.setattr(main, "counts", lambda: {"total": 0, "tier": {}, "authority": {}})
     assert client.get("/health").status_code == 503
 
 
@@ -71,7 +90,7 @@ def test_health_fails_when_the_store_is_unreachable(client, monkeypatch):
     def boom():
         raise RuntimeError("no such collection")
 
-    monkeypatch.setattr(main, "stats", boom)
+    monkeypatch.setattr(main, "counts", boom)
     assert client.get("/health").status_code == 503
 
 
@@ -95,15 +114,21 @@ def test_a_batch_is_accepted_and_audited_in_the_background(client):
 
     result = client.get(body["poll"]).json()
     assert result["status"] == "complete"
-    assert result["report"]["risk_rating"] == "Medium"
-    assert result["confidence_score"] == 0.9
+    assert result["report"]["risk_rating"] == "none"
+    assert result["candidates"] == 2 and result["findings"] == 0
 
 
 @needs_ledger
-def test_the_trace_id_and_the_resource_id_are_the_same_run(client):
-    """One id, so a LangSmith trace and an API result join without a lookup table."""
+def test_the_trace_id_the_resource_id_and_the_report_id_are_one_run(client):
+    """One id, so a LangSmith trace, an API result and a stored report join without a lookup
+    table."""
     body = client.post("/audit", files={"batch": (BATCH.name, BATCH.read_bytes())}).json()
-    assert body["audit_id"].startswith("aud-")
+    audit_id = body["audit_id"]
+    assert audit_id.startswith("run-")
+
+    result = client.get(body["poll"]).json()
+    assert result["report"]["run_id"] == audit_id
+    assert main.REPORTS.get(f"rep-{audit_id}") is not None, "step 8 persisted it"
 
 
 def test_a_file_that_is_not_a_batch_is_refused_immediately(client):
@@ -120,17 +145,30 @@ def test_an_unsupported_file_type_is_refused(client):
 
 @needs_ledger
 def test_a_failing_audit_is_reported_not_swallowed(client, monkeypatch):
-    class Exploding:
-        def invoke(self, state, config=None):
-            raise RuntimeError("the vector store went away")
+    def explode(path, **kwargs):
+        raise RuntimeError("the vector store went away")
 
-    monkeypatch.setattr(main, "build_graph", lambda: Exploding())
+    monkeypatch.setattr(main, "audit_batch", explode)
     body = client.post("/audit", files={"batch": (BATCH.name, BATCH.read_bytes())}).json()
 
     result = client.get(body["poll"]).json()
     assert result["status"] == "failed"
     assert "vector store went away" in result["error"]
     assert result["report"] is None
+
+
+@needs_ledger
+def test_an_unreadable_batch_is_reported_as_the_clients_file(client, monkeypatch):
+    """LLD §6's one loud failure. Distinguished from a server fault in the error text, because
+    the two need different actions from whoever reads it."""
+    def unreadable(path, **kwargs):
+        raise BatchUnreadable("INGEST_FILE_UNREADABLE: yielded no readable transactions")
+
+    monkeypatch.setattr(main, "audit_batch", unreadable)
+    body = client.post("/audit", files={"batch": (BATCH.name, BATCH.read_bytes())}).json()
+    result = client.get(body["poll"]).json()
+    assert result["status"] == "failed"
+    assert result["error"].startswith("INGEST_FILE_UNREADABLE")
 
 
 @needs_ledger

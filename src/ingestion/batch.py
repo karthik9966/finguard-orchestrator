@@ -20,8 +20,9 @@ the second, and a plausible account number in a filing is worse than a refusal.
 raw text and excluded from the records. Silently dropping it would let a batch that half-parsed
 report as a clean batch -- the audit would be describing transactions it never saw.
 
-This lives here rather than in `graph/nodes.py` because ingestion is not a graph concern:
-`nodes.escalate` keeps working as a shim until Phase 5 removes its last caller.
+This lives here rather than in `graph/nodes.py` because ingestion is not a graph concern, and
+because LLD §5.1 puts parsing outside the graph entirely -- `graph/run.py` calls it before a run id
+is minted, so an unreadable file is a client error rather than a failed run.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.models import QuarantinedMessage, TransactionRecord, ValidationReport
-from src.utils.swift_parser import MalformedMessage, Wire, parse_batch, to_record
+from src.utils.swift_parser import MalformedMessage, parse_batch, to_record
 
 
 def slice_month(frame: pd.DataFrame, month: str) -> pd.DataFrame:
@@ -158,10 +159,3 @@ def _record_from_extraction(extracted) -> TransactionRecord | None:
         instrument="UNKNOWN",
         extraction_method="llm_fallback",
     )
-
-
-def to_wires(records: Iterable[TransactionRecord]) -> list[Wire]:
-    """The bridge `detectors.py` reads through until Phase 5 replaces it."""
-    from src.utils.swift_parser import to_wire
-
-    return [to_wire(record) for record in records]

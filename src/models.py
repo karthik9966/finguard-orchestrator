@@ -389,6 +389,10 @@ class AgentState(TypedDict, total=False):
     retrieval: RetrievalResult | None
     draft_finding: DraftFinding | None
     findings: list[Finding]
+    # Why the *current* candidate may need a human, accumulated as retrieval and grounding go and
+    # cleared when the index advances. A Finding validates that needs_review says why, so the
+    # reasons have to survive from the node that saw the problem to the node that finalises.
+    review_notes: list[str]
     loop_count: int
     confidence_score: float
     clean_flag: bool
@@ -415,6 +419,7 @@ def initial_state(
         retrieval=None,
         draft_finding=None,
         findings=[],
+        review_notes=[],
         loop_count=0,
         confidence_score=0.0,
         clean_flag=False,

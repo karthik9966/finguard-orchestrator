@@ -320,12 +320,12 @@ def parse_message(lines: list[str], ordinal: int) -> Wire:
         raise fail(str(error)) from None
 
 
-# --- the new contract (Phase 2) -------------------------------------------------------
+# --- the standard contract ------------------------------------------------------------
 #
-# `TransactionRecord` is what detection and the model see from Phase 5 onward. `Wire` stays until
-# then, with `to_wire()` below, so `detectors.py` keeps compiling through the additive phases --
-# the migration's promise is a green suite at the end of every phase, and converting every caller
-# in one step is what would break it.
+# `TransactionRecord` is what detection, retrieval and the model see. `Wire` remains the *parser's*
+# own output -- it carries the BICs, names and addresses an MT103 actually contains, none of which
+# anything downstream of parsing needs -- and `to_record` is the one-way narrowing between them.
+# The reverse adapter is gone with the detectors that needed it: nothing converts back.
 
 # `:72:` carries the payment type and the wall-clock time the generator rendered:
 # "/INS/CHEQUE 04:22:05". Without it a record is midnight, and every detector works on a window.
@@ -368,34 +368,6 @@ def to_record(wire: Wire) -> TransactionRecord:
         # redaction covers it before any external call.
         memo=wire.memo,
         extraction_method="deterministic",
-    )
-
-
-def to_wire(record: TransactionRecord) -> Wire:
-    """The reverse adapter, so `detectors.py` keeps running until Phase 5 replaces it.
-
-    Lossy by construction: a `TransactionRecord` carries no BICs, names or addresses, because
-    nothing downstream of detection needs them. The fields a detector actually reads -- accounts,
-    amount, currency, date, countries -- all survive.
-    """
-    return Wire(
-        reference=record.txn_ref,
-        value_date=record.timestamp.date(),
-        currency=record.currency,
-        amount=record.amount,
-        sender_account=record.sender_account,
-        sender_name="",
-        sender_address="",
-        sender_bic="",
-        sender_country=record.sender_country,
-        receiver_account=record.receiver_account,
-        receiver_name="",
-        receiver_address="",
-        receiver_bic="",
-        receiver_country=record.receiver_country,
-        bank_operation_code=record.txn_type or "",
-        memo=record.memo,
-        instruction=record.instrument,
     )
 
 

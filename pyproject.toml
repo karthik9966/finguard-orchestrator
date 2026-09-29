@@ -47,9 +47,8 @@ dev = [
 # `uv sync` puts each on PATH. Every target is a
 # no-argument `main() -> int`; the generated wrapper passes that to sys.exit.
 [project.scripts]
-finguard-audit     = "src.graph.graph:main"          # batch PDF -> ComplianceReport
+finguard-audit     = "src.graph.run:main"            # batch PDF -> ComplianceReport
 finguard-parse     = "src.utils.swift_parser:main"   # MT103 batch -> wires, with stats
-finguard-detect    = "src.utils.detectors:main"      # wires -> candidate patterns
 finguard-ledger    = "src.utils.pdf_generator:main"  # render SWIFT MT103 monthly logs
 finguard-download  = "src.ingestion.download:main"   # fetch both corpora, write the manifest
 finguard-map       = "src.ingestion.obliqa_map:main" # ObliQA DocumentIDs -> document titles

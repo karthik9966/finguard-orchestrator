@@ -104,7 +104,7 @@ def evaluate(backend_name: str, tiers: set[int] | None, *, rerank_arm: bool = Fa
                 recall[k] += len(found) / len(gold)
 
             if reranked is not None:
-                from src.graph.rerank import rerank as rerank_hits
+                from src.retrieval.rerank import rerank as rerank_hits
 
                 passages = [
                     {"chunk_id": str(int(index)), "text": chunks[index]["text"]}

@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 
 import os
+from pathlib import Path
 import subprocess
 import sys
 
@@ -252,40 +253,25 @@ def test_caches_can_be_dropped():
     assert get_config() is not first
 
 
-# --- 6. the shims actually reach their consumers --------------------------------------------
-# Phase 0 of the migration repointed the pre-migration module constants at config.yaml rather
-# than deleting them, so the file is live during Phases 1-4 instead of being dead config that
-# only takes effect after the Phase 5 rewrite. These tests are what make that claim checkable:
-# without them, a number could be edited in config.yaml with no effect and nobody would know.
-def test_every_shimmed_constant_matches_the_file():
-    """A drift guard. If one of these fails, a tunable has been re-hardcoded somewhere."""
-    from src.graph import nodes, rerank, state
-    from src.ingestion import chunker, loader, store
-    from src.utils import detectors
+# --- 6. config.yaml is live, not decorative -------------------------------------------------
+# Phase 0 of the migration repointed the pre-migration module constants at config.yaml rather than
+# deleting them, so the file was live during Phases 1-4 instead of being dead config that only took
+# effect after the Phase 5 rewrite. Phase 5 removed the last of those shims: every tunable is now
+# read from `get_config()` at the point of use. This test is what keeps that true -- a re-introduced
+# module constant would be frozen at import, and the file would look live while being dead.
+def test_no_module_reads_a_tunable_at_import_time():
+    """The shims are gone. A `NAME = get_config().x.y` at module level is the pattern that made
+    config.yaml editable-but-inert, so it is banned rather than merely discouraged."""
+    import re
 
-    config = get_config()
-    assert nodes.RETRIEVE_K == config.retrieval.k_indicators
-    assert nodes.RRF_K == config.retrieval.rrf_k
-    assert state.CONFIDENCE_THRESHOLD == config.reasoning.confidence_threshold
-    assert state.MAX_REFINEMENTS == config.reasoning.max_loops
-    assert state.HIGH_RISK_CONFIDENCE == config.reasoning.high_risk_min_confidence
-    # detectors.MIN_CLUSTER_WIRES is deliberately absent. Phase 0 mapped it onto
-    # detection.fan_in.min_sources assuming they meant the same thing; Phase 3 showed they do
-    # not -- one counts wires in an unwindowed cluster, the other distinct counterparties inside
-    # a window. They now hold different values on purpose, and asserting equality would force
-    # the wrong one on whichever module lost the argument.
-    assert detectors.MIN_PATH_HOPS == config.detection.cycle.min_hops
-    assert detectors.MAX_PATH_GAP_DAYS == config.detection.window_days
-    assert detectors.MAX_PATH_LENGTH == config.detection.cycle.max_length
-    assert detectors.PATH_OVERLAP == config.detection.cycle.path_overlap
-    assert chunker.MIN_CHARS == config.chunking.min_chars
-    assert chunker.MAX_CHARS == config.chunking.max_chars
-    assert chunker.DEFAULT_PERCENTILE == config.chunking.percentile
-    assert loader.MIN_PASSAGE_CHARS == config.chunking.min_passage_chars
-    assert loader.CONTEXT_PREFIX_BELOW == config.chunking.context_prefix_below
-    assert store.UPSERT_BATCH == config.ingestion.upsert_batch
-    assert store.DEFAULT_K == config.retrieval.k_indicators
-    assert rerank.RERANK_MODEL == Settings().cross_encoder_model
+    offenders: list[str] = []
+    pattern = re.compile(r"^[A-Z_][A-Z0-9_]*\s*(?::[^=]+)?=\s*get_config\(\)", re.MULTILINE)
+    for path in sorted((Path(__file__).resolve().parents[1] / "src").rglob("*.py")):
+        for match in pattern.finditer(path.read_text()):
+            offenders.append(f"{path.name}: {match.group(0).strip()}")
+    assert not offenders, "module-level tunables read config at import and freeze: " + "; ".join(
+        offenders
+    )
 
 
 def test_editing_the_file_changes_the_detector(tmp_path):
@@ -293,17 +279,17 @@ def test_editing_the_file_changes_the_detector(tmp_path):
     value. This is the assertion that makes the config split more than decorative.
 
     Run in a subprocess rather than by reloading the module in-process. `importlib.reload` rebinds
-    every class the module defines, so `src.utils.detectors.Candidate` becomes a *new* class object
-    while other test modules still hold the old one -- and `isinstance(candidate, Candidate)`
-    starts failing in an unrelated test file. That is not a hypothetical: it is what the first
-    version of this test did. A subprocess cannot pollute the session at all, and it exercises the
-    real import path instead of a reloaded approximation of it.
+    every class the module defines, so a model class becomes a *new* class object while other test
+    modules still hold the old one -- and `isinstance` starts failing in an unrelated test file.
+    That is not a hypothetical: it is what the first version of this test did. A subprocess cannot
+    pollute the session at all, and it exercises the real import path instead of a reloaded
+    approximation of it.
     """
     path = write_config(tmp_path, lambda d: d["detection"].__setitem__("window_days", 30))
     program = (
-        "from src.utils.detectors import MAX_PATH_GAP_DAYS as gap;"
-        "from src.ingestion.chunker import MAX_CHARS as chars;"
-        "print(gap, chars)"
+        "from src.detection.base import BaseDetector;"
+        "from src.config import get_config;"
+        "print(BaseDetector.window_days.fget(None), get_config().chunking.max_chars)"
     )
     result = subprocess.run(
         [sys.executable, "-c", program],
@@ -314,6 +300,6 @@ def test_editing_the_file_changes_the_detector(tmp_path):
         timeout=180,
     )
     assert result.returncode == 0, result.stderr
-    gap, chars = result.stdout.split()
-    assert gap == "30", "config.yaml does not reach the detector"
+    window, chars = result.stdout.split()
+    assert window == "30", "config.yaml does not reach the detector"
     assert chars == "2000", "an unrelated section changed with it"

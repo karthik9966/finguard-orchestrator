@@ -17,8 +17,8 @@ from pypdf import PdfReader
 
 from src.ingestion import chunker
 
+from src.config import get_config
 from src.ingestion.chunker import (
-    MAX_CHARS,
     adjacent_distances,
     assemble,
     boundary_indices,
@@ -141,7 +141,7 @@ def test_glossary_table_splits_by_row_not_by_prose():
     )
     chunks = chunk_semantic(passage["Passage"], stub_encoder)
     assert len(chunks) > 50
-    assert all(len(chunk) <= MAX_CHARS for chunk in chunks)
+    assert all(len(chunk) <= get_config().chunking.max_chars for chunk in chunks)
     assert sum("Defined Terms | Definitions" in chunk for chunk in chunks) == len(chunks) - 1
 
 
@@ -186,8 +186,9 @@ def chunks() -> list[dict]:
 
 
 def test_no_chunk_exceeds_the_budget(chunks):
-    oversized = [c["chunk_id"] for c in chunks if len(c["text"]) > MAX_CHARS]
-    assert not oversized, f"{len(oversized)} chunks over {MAX_CHARS} chars: {oversized[:3]}"
+    budget = get_config().chunking.max_chars
+    oversized = [c["chunk_id"] for c in chunks if len(c["text"]) > budget]
+    assert not oversized, f"{len(oversized)} chunks over {budget} chars: {oversized[:3]}"
 
 
 def test_every_chunk_is_citable(chunks):

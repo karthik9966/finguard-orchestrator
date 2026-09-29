@@ -122,13 +122,9 @@ class TierAwareRetriever:
 
     @staticmethod
     def _rerank(query_text: str, hits: list[dict]) -> list[dict]:
-        """Cross-encoder pass. Measured on ObliQA: hit@1 45.2% -> 55.6%.
-
-        Lives in `graph/rerank.py` until Phase 5 moves it -- `nodes.py` imports it from there and
-        Phase 5 rewrites that file anyway.
-        """
+        """Cross-encoder pass. Measured on ObliQA: hit@1 45.2% -> 55.6%."""
         try:
-            from src.graph.rerank import rerank
+            from src.retrieval.rerank import rerank
 
             return rerank(query_text, hits)
         except Exception as error:  # noqa: BLE001 - reranking is an improvement, not a gate
@@ -137,10 +133,20 @@ class TierAwareRetriever:
 
     # --- the bundle -----------------------------------------------------------------------
 
-    def retrieve(self, candidate: Candidate) -> tuple[RetrievalResult, RetrievalNotes]:
+    def retrieve(
+        self, candidate: Candidate, *, hint: str | None = None
+    ) -> tuple[RetrievalResult, RetrievalNotes]:
+        """One candidate's bundle. `hint` is the critic's reformulated question on a loop.
+
+        The hint replaces the *indicator* query only. Obligations come from the curated map keyed
+        on the pattern type, so a second pass down a different route could only return the same
+        chunks -- what a refinement can legitimately change is which illustrative clauses the model
+        is looking at, which is where a thin finding's missing support actually lives.
+        """
         notes = RetrievalNotes()
         obligations = self.obligations_for(self.queries.key(candidate), notes)
-        indicators = self.indicators_for(self.queries.build(candidate), notes)
+        query_text = hint.strip() if hint and hint.strip() else self.queries.build(candidate)
+        indicators = self.indicators_for(query_text, notes)
         return RetrievalResult(obligations=obligations, indicators=indicators), notes
 
     @staticmethod

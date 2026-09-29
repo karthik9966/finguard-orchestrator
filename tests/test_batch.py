@@ -12,9 +12,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src.ingestion.batch import TransactionBatchIngestor, slice_month, to_wires
+from src.ingestion.batch import TransactionBatchIngestor, slice_month
 from src.models import TransactionRecord
-from src.utils.swift_parser import MalformedMessage, parse_batch, to_record, to_wire
+from src.utils.swift_parser import MalformedMessage, parse_batch, to_record
 
 LEDGER = Path(__file__).resolve().parents[1] / "data" / "processed" / "ledger"
 BATCH = LEDGER / "2023-06_private_banking_log.txt"
@@ -122,16 +122,20 @@ def test_a_fallback_that_raises_quarantines_rather_than_failing_the_batch(tmp_pa
 
 
 @needs_ledger
-def test_what_a_detector_reads_survives_the_round_trip():
-    """`detectors.py` runs through `to_wire` until Phase 5 replaces it. The adapter is lossy by
-    design -- no BICs, no names -- but nothing a detector reads may be lost."""
+def test_everything_a_detector_reads_survives_the_narrowing():
+    """`to_record` narrows a parsed MT103 to the standard contract, dropping the BICs, names and
+    addresses nothing downstream needs. What a detector actually reads may not be lost."""
     wire = parse_batch(BATCH, strict=True).wires[0]
-    back = to_wire(to_record(wire))
-    for field in (
-        "reference", "value_date", "currency", "amount", "sender_account",
-        "receiver_account", "sender_country", "receiver_country", "memo",
-    ):
-        assert getattr(back, field) == getattr(wire, field), field
+    record = to_record(wire)
+    assert record.txn_ref == wire.reference
+    assert record.timestamp.date() == wire.value_date
+    assert (record.amount, record.currency) == (wire.amount, wire.currency)
+    assert record.sender_account == wire.sender_account
+    assert record.receiver_account == wire.receiver_account
+    assert (record.sender_country, record.receiver_country) == (
+        wire.sender_country, wire.receiver_country
+    )
+    assert record.memo == wire.memo
 
 
 @needs_ledger
@@ -149,14 +153,6 @@ def test_the_memo_survives_ingestion():
     Design §5's injection fixture tests nothing. Redaction covers it before any external call."""
     records, _ = TransactionBatchIngestor(fallback=_never_called).ingest([BATCH])
     assert any(r.memo for r in records)
-
-
-@needs_ledger
-def test_records_convert_back_for_the_old_detectors():
-    records, _ = TransactionBatchIngestor(fallback=_never_called).ingest([BATCH])
-    wires = to_wires(records)
-    assert len(wires) == len(records)
-    assert {w.reference for w in wires} == {r.txn_ref for r in records}
 
 
 def _never_called(failure):

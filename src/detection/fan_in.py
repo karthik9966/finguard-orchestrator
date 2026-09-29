@@ -1,6 +1,6 @@
 """Fan-in: many distinct senders paying one account inside the window.
 
-Ported from `find_clusters` (`utils/detectors.py:194`), with one behaviour change: **a time
+Ported from the pre-migration `find_clusters`, with one behaviour change: **a time
 window**. The old primitive applied none, so an account with fifteen counterparties spread over a
 month scored exactly like fifteen in an afternoon -- and on the 10,000-message batch the
 unwindowed primitives returned 932 candidates.

@@ -1,7 +1,7 @@
 """The detection package (Phase 3, LLD §2.4).
 
-Unit tests build records directly; the recall harness runs the real ledgers. The old
-`utils/detectors.py` and its 26 tests are untouched -- this lands beside them until Phase 5.
+Unit tests build records directly; the recall harness runs the real ledgers. This replaced
+`utils/detectors.py` and its 26 tests, which Phase 5 deleted along with the module.
 """
 
 from __future__ import annotations

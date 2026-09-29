@@ -22,7 +22,7 @@ from src.config import get_config
 def coefficient_of_variation(amounts: Sequence[Decimal]) -> float:
     """Standard deviation as a fraction of the mean -- spread on a comparable scale.
 
-    Ported from `utils/detectors.py`. Ten payments averaging 5,673 with a deviation of 139 give
+    Ported from the pre-migration scorer. Ten payments averaging 5,673 with a deviation of 139 give
     0.024: effectively the same payment ten times. Unitless on purpose, so a $5,000 cluster and a
     $500,000 cluster are judged on shape rather than size.
     """

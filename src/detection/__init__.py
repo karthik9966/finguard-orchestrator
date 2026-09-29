@@ -1,9 +1,9 @@
 """Pattern detection (LLD §2.4, PRD §2).
 
-Five named typologies, each with a time window, landing **beside** `src/utils/detectors.py`
-rather than replacing it -- Phase 5 removes the old module when its last caller goes.
+Five named typologies, each with a time window. This replaced the four geometric primitives of
+`utils/detectors.py`, which Phase 5 deleted once the reasoning core stopped calling it.
 
-Three things differ from the primitives this replaces, and each is a recorded defect of theirs:
+Three things differ from those primitives, and each is a recorded defect of theirs:
 
 * **A window.** `find_clusters` applies none, so an account with fifteen counterparties spread
   over a month scores exactly like fifteen in an afternoon. On the 10,000-message batch the old

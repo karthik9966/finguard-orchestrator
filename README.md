@@ -63,7 +63,6 @@ puts each on PATH:
 | `finguard-benchmark` | recall@k against the 2,786-question gold set | only `--backend openai` |
 | `finguard-store` | build / inspect / query the ChromaDB collection | no |
 | `finguard-parse` | MT103 batch -> wires, with per-batch stats | no |
-| `finguard-detect` | wires -> candidate patterns | no |
 | `finguard-audit` | batch PDF -> `ComplianceReport` | **yes** |
 
 `finguard-audit` also draws its own graph without running a batch:
