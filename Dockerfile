@@ -1,8 +1,18 @@
 # Multi-stage build for the audit service (§10).
 #
-# The blueprint's sketch assumes requirements.txt and pip; this project uses uv and a lockfile,
-# so the shape is the same and the commands are not. Two things dominate the image size and both
-# are handled deliberately:
+# The design documents assume requirements.txt and pip; this project uses uv and a lockfile, so the
+# shape is the same and the commands are not. **Recorded deviation from LLD §8**, which asks for
+# pinned dependencies: `uv sync --frozen` is a stricter answer than a requirements.txt, because the
+# lockfile pins the whole resolved graph with hashes rather than a flat list. A requirements.txt is
+# therefore not checked in -- a file that looks authoritative while the image installs something
+# else is worse than no file -- and is generated on demand for a scanner or an audit that needs one:
+#
+#   uv export --no-dev --format requirements-txt --no-emit-project > requirements.txt
+#
+# That produces 3,794 lines with 3,174 hashes, all derived from the same uv.lock the image uses, so
+# it cannot drift from what is actually installed.
+#
+# Two things dominate the image size and both are handled deliberately:
 #
 #   torch          517 MB on the default index, because sentence-transformers pulls it for the
 #                  local MiniLM embeddings. The Linux default wheel bundles CUDA, which is dead

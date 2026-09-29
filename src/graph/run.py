@@ -27,9 +27,11 @@ from pathlib import Path
 from typing import Any
 
 from src.graph.cost import UsageLedger
-from src.graph.graph import build_graph, new_run_id, run_config, tracing_project
+from src.graph.graph import build_graph, new_run_id, run_config
 from src.ingestion.batch import TransactionBatchIngestor
 from src.models import ComplianceReport, TransactionRecord, ValidationReport, initial_state
+from src.observability import audit_trace, handler, score_findings, tracing_target
+from src.observability.tracing import run_metadata
 from src.store import ResultsStore, ResultsStoreUnavailable, default_store
 
 log = logging.getLogger(__name__)
@@ -125,11 +127,23 @@ def _prepare(
     # The ledger is registered as a run-level callback. LangChain propagates those into every
     # nested call, so a node added later is accounted for without being registered anywhere.
     config = run_config(
-        run_id=run_id, batch_id=state["batch_id"], tags=tags, metadata=metadata,
+        run_id=run_id, batch_id=state["batch_id"], tags=tags,
+        metadata={
+            # HLD §6's run-level tags. The LangChain integration reads the `langfuse_*` keys and
+            # stamps them on the trace, so a run is filterable by period and tier in the UI.
+            **run_metadata(
+                run_id=run_id, batch_id=state["batch_id"], period=state["period"],
+                records=len(records),
+            ),
+            **(metadata or {}),
+        },
         candidate_count=_upper_bound_candidates(records),
     )
     ledger = UsageLedger()
-    config["callbacks"] = [ledger]
+    # One ledger and one trace handler, registered run-level: LangChain propagates run callbacks
+    # into every nested call, so a node added later is accounted for and traced without being
+    # registered anywhere.
+    config["callbacks"] = [callback for callback in (ledger, handler()) if callback is not None]
     return _Prepared(state, config, ledger, validation, run_id, len(records))
 
 
@@ -173,8 +187,16 @@ def audit_batch(
 ) -> RunResult:
     """One batch, end to end. The CLI and the API both come through here."""
     prepared = _prepare(paths, ingestor=ingestor, tags=tags, metadata=metadata, run_id=run_id)
-    final = (graph or build_graph()).invoke(prepared.state, prepared.config)  # type: ignore[arg-type]
-    return _finish(prepared, dict(final), store)
+    with audit_trace(
+        run_id=prepared.run_id, batch_id=prepared.state["batch_id"],
+        period=prepared.state["period"], records=prepared.records,
+    ) as trace_id:
+        final = (graph or build_graph()).invoke(
+            prepared.state, prepared.config
+        )  # type: ignore[arg-type]
+        result = _finish(prepared, dict(final), store)
+        score_findings(trace_id, result.report.findings, run_id=prepared.run_id)
+    return result
 
 
 def stream_audit(
@@ -197,13 +219,19 @@ def stream_audit(
     """
     prepared = _prepare(paths, ingestor=ingestor, tags=tags, metadata=metadata, run_id=run_id)
     state = dict(prepared.state)
-    for step in (graph or build_graph()).stream(
-        prepared.state, prepared.config, stream_mode="updates"  # type: ignore[arg-type]
-    ):
-        for node, update in step.items():
-            state.update(update or {})
-            yield node, state
-    yield "__final__", _finish(prepared, state, store)
+    with audit_trace(
+        run_id=prepared.run_id, batch_id=prepared.state["batch_id"],
+        period=prepared.state["period"], records=prepared.records,
+    ) as trace_id:
+        for step in (graph or build_graph()).stream(
+            prepared.state, prepared.config, stream_mode="updates"  # type: ignore[arg-type]
+        ):
+            for node, update in step.items():
+                state.update(update or {})
+                yield node, state
+        result = _finish(prepared, state, store)
+        score_findings(trace_id, result.report.findings, run_id=prepared.run_id)
+    yield "__final__", result
 
 
 def _upper_bound_candidates(records: list[TransactionRecord]) -> int:
@@ -221,10 +249,10 @@ def _upper_bound_candidates(records: list[TransactionRecord]) -> int:
 
 def print_run(result: RunResult, *, stored_at: str = "") -> None:
     report = result.report
-    project = tracing_project()
+    target = tracing_target()
     print(f"\nrun_id     : {result.run_id}")
     print(f"report_id  : {report.report_id}" + (f"  ->  {stored_at}" if stored_at else ""))
-    print(f"tracing    : {f'LangSmith project {project!r}' if project else 'off'}")
+    print(f"tracing    : {f'Langfuse at {target}' if target else 'off'}")
     print(f"batch      : {report.period} · {result.records} record(s)")
     print(f"ingested   : {result.validation.summary()}")
     print(f"candidates : {result.candidates}")

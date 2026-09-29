@@ -35,6 +35,7 @@ dependencies = [
     # `src/store/results.py` imports it directly and the LLD's RESULTS_DB_URL is the whole reason
     # it is here: SQLite in v1 and Postgres in production is a URL change and nothing else.
     "sqlalchemy",
+    "langfuse>=4.15.6",
 ]
 
 [dependency-groups]

@@ -16,7 +16,7 @@ Full design: [`docs/Karthik Project 1 Blueprint.pdf`](docs/).
 - **Redis** — vector semantic cache
 - **FastAPI** — async serving layer
 - **Streamlit** — auditor cockpit UI
-- **LangSmith / DeepEval / RAGAS** — tracing and evaluation
+- **Langfuse (self-hosted) / DeepEval** — tracing and evaluation
 
 ## Layout
 
@@ -324,12 +324,15 @@ consultancy fee at 53.7x the batch median. Before the cap it read *High, file a 
 with 23 laundering wires read *Low*. Quantifying that is what §8's eval suite is for; tuning it by
 hand against one report at a time is the unmeasured approach that suite exists to replace.
 
-## Observability (§7)
+## Observability — Langfuse, self-hosted (HLD §6)
 
 ```bash
-export LANGCHAIN_TRACING_V2=true
-export LANGCHAIN_API_KEY=...            # from smith.langchain.com
-export LANGCHAIN_PROJECT=finguard-orchestrator
+docker compose up -d langfuse                # the tracing stack (see "Docker" below)
+export LANGFUSE_TRACING=true
+export LANGFUSE_HOST=http://localhost:3000
+export LANGFUSE_PUBLIC_KEY=pk-lf-...         # from the Langfuse project you create
+export LANGFUSE_SECRET_KEY=sk-lf-...
+export CLIENT_TIER=tier-1-private-banking
 
 uv run finguard-audit --batch <path> --tag NIGHTLY
 ```
@@ -337,60 +340,78 @@ uv run finguard-audit --batch <path> --tag NIGHTLY
 Every run prints its own identity before it starts working, so a trace can be found again:
 
 ```
-audit_id   : aud-b38323fd2cd1
-tracing    : LangSmith project 'finguard-orchestrator'
+run_id     : run-c294f5b92b69
+report_id  : rep-run-c294f5b92b69  ->  sqlite:///./results.db
+tracing    : Langfuse at http://localhost:3000
 ```
 
-`tracing: off` when the variables are unset — reported rather than assumed, because a trace that
-is silently not being written is worse than none: you go looking for it after the run instead of
-before.
+`tracing: off` when the keys are unset — reported rather than assumed, because a trace that is
+silently not being written is worse than none: you go looking for it after the run instead of before.
+Tracing needs the flag **and** both keys; a flag alone was a silent no-op in the pre-migration
+wiring, so both are checked in one place.
 
-**Metadata is attached at two levels, and it has to be.** The blueprint's §7.2 example reads
-`batch_wire_count` from state at `invoke()` time, where it is always zero — PARSE has not run
-yet. So the run-level config carries only what is knowable up front (the `audit_id` every span
-shares, the batch name, `AML_AUDIT_RUN` plus any `--tag`), and `nodes.trace_config` attaches the
-rest to each model call as it happens:
+**Self-hosted, and that is the point.** Traces here carry reasoning over transaction data. Keeping
+them in-environment is what makes the next section a design rather than an apology.
 
-| | on the run | on each model call |
+### What leaves the process, and what does not
+
+The pre-migration system traced to a hosted project and uploaded **a measured 137,261 characters per
+run** — every parsed wire with its counterparty names, account numbers and addresses, of which only
+~21 ever reached a model. Every span records its inputs and outputs, and `parse` was a node, so the
+whole book went up as a side effect of instrumenting the graph.
+
+Two things fix that, and both are in `src/observability/tracing.py`:
+
+```python
+mask = lambda data: trim(redact(data))      # set on the Langfuse client itself
+```
+
+`redact` decides what may leave at all — accounts pseudonymised to a stable `ACCT-xxxxxxxx` token,
+memos scrubbed of identifier-shaped substrings, names dropped. `trim` then decides how much is worth
+sending, because pseudonymised bulk is still bulk: the graph state carries the whole parsed ledger,
+so `records` becomes `"[500 record(s) -- omitted from the trace]"` and any unexpected list is capped
+at 25 entries. The hook is Langfuse's own `mask` parameter, set on the client, so it covers every
+span the SDK emits — including the ones the LangChain integration creates without being asked.
+Redacting at each call site instead would mean the one span somebody forgets is the one carrying an
+account number.
+
+Transaction references and pattern metadata are kept deliberately (HLD §6): a trace that cannot say
+*which* transactions a finding covers is not much use. Amounts are kept too, as strings — an exported
+`Decimal` came out of Langfuse as the literal `"<Decimal>"`, which is worse than useless in a trace
+about sub-threshold structuring.
+
+Measured on the clean May control, captured from the OpenTelemetry exporter rather than estimated:
+
+| | before | now |
 |---|---|---|
-| `audit_id`, batch, tags | ✓ | |
-| wire / candidate count, shapes | | ✓ |
-| clause count, `loop:N` tag | | ✓ |
+| payload per run | ~137 KB | **9.2 KB** across 5 spans |
+| raw account numbers | 500 records' worth | **0** |
+| counterparty names | all of them | **0** |
+| the parsed ledger | uploaded in full | `[500 record(s) -- omitted]` |
 
-That split is what makes §7.2's actual question answerable — *which context block caused the
-critic to trigger a loop revision*. The two drafts of a looping run carry different `loop:` tags,
-so they are distinguishable in the trace instead of being two identical-looking spans. (Clause
-count does *not* separate them once retrieval is at the `MAX_CONTEXT_CLAUSES` cap — a verified
-May run shows 24 on both passes — which is exactly why the loop number is tagged.)
+`tests/test_tracing.py` asserts that against the batch's *real* contents — accounts, names and memos
+are read out of the ledger and searched for in the emitted spans, so the test cannot pass by checking
+values the batch does not contain.
 
-Verified against a live project: a May run tagged `VERIFY_B1` produced a root span carrying
-`['VERIFY_B1', 'AML_AUDIT_RUN']` and the `audit_id` printed by the CLI, with `node:draft` spans at
-`loop:0` and `loop:1` beneath it.
+### Tagging (HLD §6)
 
-Costs nothing when tracing is off: LangChain ignores the config unless `LANGCHAIN_TRACING_V2` is
-set, and the whole suite runs with it unset.
+| level | carries |
+|---|---|
+| run / trace | `run_id` (also the session id), `batch_id`, period, record count, client tier, `AML_AUDIT_RUN` |
+| each node span | node name, candidate index and id, pattern type, `loop:N` |
+| per finding | a `critique` score — its value is the confidence, with pattern type, risk level, status and transaction count as metadata |
 
-### What is actually traced, and what that means
+One score per *finding* rather than per run, so a run with four confident findings and one the review
+could not stand behind does not average into a single reassuring number.
 
-Tracing is not scoped to model calls. LangSmith instruments **Runnables**, and LangGraph compiles
-every node into one, so a run of this graph records 16 spans: 3 of type `llm` (the model calls)
-and 13 of type `chain` — including `parse`, `detect` and `audit`, which never reach a model. That
-is the default and the only setting: `LANGCHAIN_TRACING_V2` is all-or-nothing, and the tags above
-are the only part of it this project wrote.
+The per-finding scores are emitted from `run.py` after the graph returns, using the trace id captured
+from the root span — not from inside the critic node. Reading the trace id inside a node would depend
+on OpenTelemetry's context surviving however LangGraph happens to schedule that node, which is not a
+thing to bet a privacy-sensitive audit trail on.
 
-It is genuinely useful — the `audit` span shows retrieval taking ~2s and returning 24 clauses for
-$0.00, which a model-only tracer would not show at all.
-
-**But it means more than prompts leaves the machine.** Every span records its full inputs and
-outputs, so the `parse` node uploads its entire result: a measured 137,261 characters on the
-August batch — all 220 wires with names, account numbers, addresses and amounts, of which only
-~21 ever reach a model. The upload is a consequence of `parse` being a node, not of anything
-being sent to OpenAI.
-
-For the synthetic ledger in this repo that is fine. Before this is pointed at real payment data,
-it is the difference between *"we send a third party our prompts"* and *"we send a third party
-the whole book"*, and the honest options are to leave tracing off in that environment, or to
-trace a redacted projection of the state rather than the wires themselves.
+**Tracing is entirely optional.** With no keys configured every function in that module is a no-op,
+because an audit must not fail, or behave differently, because an observability stack is down. The
+whole test suite runs with tracing off except the twelve tests that turn it on deliberately.
 
 ## Cost (§9.1)
 
@@ -679,7 +700,7 @@ GET  /audits/run-fd6706b71605   → complete, report rep-run-fd6706b71605
 GET  /reports?period=2023-05    → 1 report
 ```
 
-The `job_id` **is** the `run_id`, and the report is `rep-{run_id}` — so a LangSmith trace, a job row
+The `job_id` **is** the `run_id`, and the report is `rep-{run_id}` — so a Langfuse trace, a job row
 and a stored report are one run rather than three id schemes to join.
 
 Job state and reports live in SQLite at `RESULTS_DB_URL`, not in a process dict. That is what the
@@ -704,11 +725,47 @@ read, so `:ro` fails with *"attempt to write a readonly database"*.
 
 ```bash
 docker build -t finguard .
-docker run -p 8000:8000 -v "$PWD/chroma_db:/app/chroma_db" -e OPENAI_API_KEY=sk-... finguard
+docker run -p 8000:8000 -v "$PWD/chroma_db:/app/chroma_db" \
+  -e LLM_API_KEY=sk-... -e API_AUTH_TOKEN=$(openssl rand -hex 32) finguard
 ```
 
 `.dockerignore` takes the build context from **1.7 GB to 2.4 MB** — `.venv` and `data/` alone
 would otherwise be uploaded to the daemon on every build.
+
+**Pinned dependencies, recorded deviation.** LLD §8 asks for a pinned `requirements.txt`; the image
+installs from `uv.lock` with `uv sync --frozen`, which pins the whole resolved graph *with hashes*
+rather than a flat list. A requirements.txt is therefore not checked in — a file that looks
+authoritative while the image installs something else is worse than no file — and is produced on
+demand for a scanner that wants one:
+
+```bash
+uv export --no-dev --format requirements-txt --no-emit-project > requirements.txt   # 3,174 hashes
+```
+
+### Compose: the whole box
+
+```bash
+export LLM_API_KEY=sk-... API_AUTH_TOKEN=$(openssl rand -hex 32)
+docker compose up -d api ui          # the engine and the cockpit, tracing off
+docker compose up -d                 # everything, including the Langfuse stack
+```
+
+| service | |
+|---|---|
+| `api` | the audit engine on :8000, reports on a named volume so they survive `--force-recreate` |
+| `ui` | the cockpit on :8501, same image, reaching the API over HTTP like any other client |
+| `langfuse` + `langfuse-worker` | the trace UI on :3000 and its ingestion worker |
+| `postgres` · `clickhouse` · `minio` · `cache` | Langfuse's own stores |
+
+**Six services for Langfuse, not two.** The migration plan said "langfuse + its Postgres", which was
+true of Langfuse v2. v3 split storage three ways — Postgres for configuration, ClickHouse for the
+traces themselves, S3/MinIO for large payloads, Redis for the queue between web tier and worker — and
+the SDK here (4.x) speaks the OpenTelemetry endpoint only v3+ serves. Pinning an older server the
+client cannot talk to would have been the smaller diff and the wrong answer.
+
+`api` and `ui` require `LLM_API_KEY` and `API_AUTH_TOKEN` and refuse to start without them; every
+`LANGFUSE_*` variable has a default, because tracing being unconfigured must mean *off* rather than
+*broken*.
 
 ### Measured, not estimated
 
@@ -848,7 +905,7 @@ hides the reason it won.
   - [x] §4.2 Auditor Critic node with refinement loops back to ChromaDB
   - [x] §4.2 Fallback routes — malformed message, unreadable batch, empty retrieval
 - [x] Phase 3 — Observability, evals, cost optimization
-  - [x] §7 LangSmith tracing, run-tagging & custom metadata
+  - [x] §7 Langfuse tracing, run-tagging & custom metadata
   - [x] §8 DeepEval harness — Faithfulness, Relevancy, Context Precision
   - [x] §9.2 Hierarchical cost pre-router (already `route_after_detect`), now measured
   - [x] §9.4 FlashRank reranking — adopted; the 15→4 prune measured unsafe and rejected

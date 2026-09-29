@@ -86,11 +86,30 @@ def test_transaction_references_survive():
 
 
 def test_amounts_and_dates_survive():
-    """A report that cannot state an amount cannot justify a threshold finding."""
+    """A report that cannot state an amount cannot justify a threshold finding.
+
+    The amount comes back as a *string*, not a Decimal. That is deliberate and was forced by
+    measurement: an exported Decimal came out of Langfuse as the literal "<Decimal>", because the
+    value is redacted on its way into a JSON serialiser that has no Decimal. No precision is lost --
+    `str(Decimal)` is exact -- and both consumers of this function, a prompt and a trace, want text.
+    """
     out = redact(record())
-    assert out["amount"] == Decimal("9500.00")
+    assert out["amount"] == "9500.00"
+    assert Decimal(out["amount"]) == Decimal("9500.00"), "exact, not a float round trip"
     assert out["currency"] == "USD"
     assert out["timestamp"] == dt.datetime(2023, 6, 1, tzinfo=UTC)
+
+
+def test_an_iso_date_is_not_mistaken_for_an_identifier():
+    """"2023-06-14" is an 8-digit run with hyphen separators, so the identifier pattern caught it --
+    and `narrative` is scrubbed free text, so a finding whose explanation read "three transfers on
+    [REDACTED]" had lost the thing that made it checkable. A hyphenated phone number is 3-3-4 and is
+    still masked; only the 4-2-2 shape is exempt."""
+    assert scrub("three transfers on 2023-06-14 and 2023-06-21") == (
+        "three transfers on 2023-06-14 and 2023-06-21"
+    )
+    assert scrub("call 555-123-4567") == "call [REDACTED]"
+    assert not contains_identifier("2023-06-14")
 
 
 def test_decimal_amounts_in_free_text_are_not_eaten():

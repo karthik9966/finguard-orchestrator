@@ -27,12 +27,9 @@ malformed file is a client error before a run id is ever minted.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
 
 from src.graph.nodes import (
@@ -45,13 +42,7 @@ from src.graph.nodes import (
     route_after_detection,
 )
 from src.models import AgentState
-
-# Explicit, not incidental. The tracing variables do reach the process without this line -- via
-# retriever → store → embeddings, which calls load_dotenv for its own reasons -- but that is a
-# chain of imports none of which exists for this purpose, and rearranging any of them would turn
-# tracing off silently. That is the one failure `tracing_project()` exists to make visible.
-load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
-
+from src.observability import TRACE_TAG
 
 def build_graph(
     *,
@@ -101,18 +92,6 @@ def recursion_limit(candidate_count: int, max_loops: int) -> int:
     return max(25, 2 + candidate_count * per_candidate + 2)
 
 
-def tracing_project() -> str | None:
-    """The LangSmith project this run lands in, or None when tracing is off.
-
-    Reported rather than assumed: a trace that silently is not being written is worse than no
-    tracing at all, because you go looking for it after the run instead of before.
-    """
-    enabled = os.environ.get("LANGCHAIN_TRACING_V2", "").strip().lower() in {"true", "1", "yes"}
-    if not enabled or not os.environ.get("LANGCHAIN_API_KEY"):
-        return None
-    return os.environ.get("LANGCHAIN_PROJECT", "default")
-
-
 def run_config(
     *,
     run_id: str,
@@ -131,7 +110,7 @@ def run_config(
 
     return {
         "run_id": None,  # LangGraph mints its own; ours travels in metadata, where it is greppable
-        "tags": ["AML_AUDIT_RUN", *(tags or [])],
+        "tags": [TRACE_TAG, *(tags or [])],
         "metadata": {"run_id": run_id, "batch_id": batch_id, **(metadata or {})},
         "recursion_limit": recursion_limit(candidate_count, get_config().reasoning.max_loops),
     }

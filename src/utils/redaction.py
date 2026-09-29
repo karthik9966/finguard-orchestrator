@@ -107,7 +107,11 @@ _IBAN = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b")
 # 5-digit and a 2-digit run, not a 7-digit identifier. The residual cost is that an amount above
 # a million written without separators ("10000000") is masked inside free text. Worth it -- the
 # amount a finding relies on comes from the structured field, never from the memo line.
-_DIGIT_RUN = re.compile(r"(?<![\d.])\+?(?:\d[ -]?){6,}\d(?![\d.])")
+# `(?!\d{4}-\d{2}-\d{2})` exempts an ISO date. Without it "2023-06-14" reads as an 8-digit run with
+# hyphen separators and is masked -- which matters because `narrative` is scrubbed free text, and a
+# finding whose explanation says "three transfers on [REDACTED]" has lost the thing that makes it
+# checkable. A hyphenated phone number is 3-3-4 and still matches; only the 4-2-2 shape is exempt.
+_DIGIT_RUN = re.compile(r"(?<![\d.])(?!\d{4}-\d{2}-\d{2})\+?(?:\d[ -]?){6,}\d(?![\d.])")
 
 
 def pseudonymise_account(value: str) -> str:
@@ -159,9 +163,13 @@ def redact(value: Any, *, field: str | None = None) -> Any:
         return scrub(value)
     if key in PRESERVED_FIELDS:
         return value
-    if isinstance(value, (Decimal, datetime, date)):
-        # Amounts and timestamps are evidence, not identity, and a report that cannot state an
-        # amount cannot justify a threshold finding.
+    if isinstance(value, Decimal):
+        # Amounts are evidence, not identity: a report that cannot state an amount cannot justify a
+        # threshold finding. Rendered as a string because that is what survives a JSON serialiser --
+        # an exported Decimal came out of Langfuse as the literal "<Decimal>", which is worse than
+        # useless in a trace about sub-threshold structuring.
+        return str(value)
+    if isinstance(value, (datetime, date)):
         return value
     if isinstance(value, str) and field is None:
         # A bare string with no field context: scrub it rather than trust it.

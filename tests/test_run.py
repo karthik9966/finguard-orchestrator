@@ -135,7 +135,7 @@ def test_the_quarantine_count_travels_into_the_state(tmp_path):
 
 
 def test_the_run_id_is_one_id_shared_by_the_state_and_the_trace(tmp_path):
-    """One id, so a LangSmith trace and a stored report join without a lookup table."""
+    """One id, so a Langfuse trace and a stored report join without a lookup table."""
     batch = tmp_path / "2023-06.txt"
     batch.write_text("x")
     graph = StubGraph(report_for())

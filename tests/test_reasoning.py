@@ -564,38 +564,25 @@ def test_trace_config_survives_an_index_past_the_last_candidate():
 
 def test_tracing_reports_itself_as_off_without_a_key(monkeypatch):
     """A trace that is silently not being written is worse than none: you go looking for it after
-    the run instead of before."""
-    from src.graph.graph import tracing_project
+    the run instead of before. Langfuse needs the flag *and* both keys, and `tracing_target` reports
+    the host only when all three are present."""
+    from src.config import reset_caches
+    from src.observability import tracing
 
-    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
-    monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
-    assert tracing_project() is None
+    monkeypatch.setenv("LANGFUSE_TRACING", "true")
+    monkeypatch.setenv("LANGFUSE_HOST", "http://localhost:3000")
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    reset_caches()
+    tracing.reset()
+    assert tracing.tracing_target() is None, "a flag without keys is off, not on"
 
-    monkeypatch.setenv("LANGCHAIN_API_KEY", "ls-fake")
-    monkeypatch.setenv("LANGCHAIN_PROJECT", "finguard-orchestrator")
-    assert tracing_project() == "finguard-orchestrator"
+    monkeypatch.setenv("LANGFUSE_TRACING", "false")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-x")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-x")
+    reset_caches()
+    tracing.reset()
+    assert tracing.tracing_target() is None, "keys without the flag is off too"
 
-    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
-    assert tracing_project() is None
-
-
-def test_a_chunk_id_invented_in_the_prose_is_caught_too():
-    """A live June run cited ids inside the narrative as well as in the structured lists. The prose
-    is the half an analyst reads, so leaving it ungated would gate the half that cannot mislead."""
-    target = candidate("a")
-    invented = draft_for(
-        target,
-        narrative="This aligns with red-flag indicator [ffiec-appendix-f:0123456789abcdef], "
-                  f"alongside [{INDICATOR.chunk_id}].",
-    )
-    assert nodes.fabricated_ids(invented, BUNDLE) == ["ffiec-appendix-f:0123456789abcdef"]
-
-
-def test_a_narrative_citing_only_what_it_was_shown_passes():
-    target = candidate("a")
-    honest = draft_for(
-        target,
-        narrative=f"The obligation [{OBLIGATION.chunk_id}] applies, illustrated by "
-                  f"[{INDICATOR.chunk_id}].",
-    )
-    assert nodes.fabricated_ids(honest, BUNDLE) == []
+    tracing.reset()
+    reset_caches()

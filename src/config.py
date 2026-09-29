@@ -24,9 +24,17 @@ from typing import Literal
 
 import yaml
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# `Settings` reads .env by itself through `env_file` below, but that populates the *model*, not
+# `os.environ` -- and several modules (the Chroma paths, the embedding backends) read the environment
+# directly at import. Loading it here, in the module every one of them already imports, is what makes
+# that deterministic instead of depending on which import happened to run first. It used to live in
+# `graph/graph.py` for the LangSmith variables; those are gone, the need is not.
+load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 PatternType = Literal["structuring", "fan_in", "fan_out", "cycle", "scatter_gather"]
 
@@ -129,6 +137,13 @@ class Settings(BaseSettings):
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_tracing: bool = False
+    # Separates one deployment's traces from another's in the same Langfuse project.
+    langfuse_environment: str = "development"
+    # HLD §6 asks for a client-tier tag so runs can be compared across tiers. The engine has no
+    # notion of a client yet -- one deployment audits one institution -- so it is a deployment
+    # label rather than a lookup, and it is here rather than in config.yaml because it identifies
+    # *this install* rather than tuning behaviour.
+    client_tier: str = "unspecified"
 
     # --- serving ----------------------------------------------------------------------------
     api_auth_token: str = ""
