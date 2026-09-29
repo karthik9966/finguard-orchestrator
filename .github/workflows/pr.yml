@@ -82,6 +82,13 @@ jobs:
         # regression rather than on a rounding difference.
         run: uv run pytest tests/ -q --strict-markers --cov --cov-report=term
 
+      - name: Graph-engine correctness
+        # Evaluation Design v2's hard gate, named so it is visible as its own line: on crafted
+        # graphs with a known structure (chained funnels, K(m,n) blocks, stacked blocks), every
+        # traversal and block query recovers exactly that structure, and a near-complete 14,000-edge
+        # graph stays inside the configured bounds instead of hanging.
+        run: uv run pytest tests/test_graph_engine.py -q
+
       - name: The golden datasets still describe themselves
         # Added in Phase 8. The datasets are the measuring instrument, so they are checked like one:
         # every labelled reference present in the batch it names, no transaction in two instances, no
