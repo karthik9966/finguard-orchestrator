@@ -59,12 +59,13 @@ from sqlalchemy import (
     delete,
     func,
     insert,
+    inspect,
     select,
 )
 from sqlalchemy.engine import Engine
 
 from src.config import get_config, get_settings
-from src.models import ComplianceReport, Finding, FindingStatus
+from src.models import ComplianceReport, Finding, FindingStatus, ValidationReport
 
 log = logging.getLogger(__name__)
 
@@ -110,7 +111,8 @@ class InvalidTransition(ValueError):
 class ResultsStore(Protocol):
     """Where a finished report goes, and where the review loop reads it back from."""
 
-    def save(self, report: ComplianceReport) -> None: ...
+    def save(self, report: ComplianceReport, *, validation: ValidationReport | None = None) -> None:
+        ...
 
     def get(self, report_id: str) -> ComplianceReport | None: ...
 
@@ -127,9 +129,15 @@ class InMemoryResultsStore:
     """
 
     reports: dict[str, ComplianceReport] = field(default_factory=dict)
+    validations: dict[str, ValidationReport] = field(default_factory=dict)
 
-    def save(self, report: ComplianceReport) -> None:
+    def save(self, report: ComplianceReport, *, validation: ValidationReport | None = None) -> None:
         self.reports[report.report_id] = report
+        if validation is not None:
+            self.validations[report.report_id] = validation
+
+    def validation_for(self, report_id: str) -> ValidationReport | None:
+        return self.validations.get(report_id)
 
     def get(self, report_id: str) -> ComplianceReport | None:
         return self.reports.get(report_id)
@@ -156,6 +164,12 @@ REPORTS = Table(
     # The frozen deliverable. Written once, never updated -- see the module docstring.
     Column("report_json", Text, nullable=False),
     Column("schema_version", String(16), nullable=False),
+    # The ingestion ValidationReport: what parsed, what the fallback rescued, and the raw text of
+    # every message neither could read. `ComplianceReport` carries only the *count*, and a count is
+    # not actionable -- an analyst told "12 messages could not be parsed" needs to see which twelve
+    # before they can go and fix the source. Nullable because a report saved without one is still a
+    # report.
+    Column("validation_json", Text, nullable=True),
     Index("ix_reports_period", "period"),
 )
 
@@ -247,9 +261,42 @@ class SqlResultsStore:
         self.url = url or get_settings().results_db_url
         self._engine = engine or self._build_engine(self.url)
         METADATA.create_all(self._engine)
+        self._add_missing_columns()
         # LLD §6: the report is *held* when a write fails, so a caller can re-save. This is the
         # holding place, and `flush()` is the retry.
         self.unsaved: dict[str, ComplianceReport] = {}
+
+    def _add_missing_columns(self) -> None:
+        """Add nullable columns this build expects and an older database lacks.
+
+        `create_all` creates missing *tables* and never alters existing ones, so a column added in a
+        later phase is invisible on a database written by an earlier one -- and the failure is a
+        confusing `no such column` on a query, not on startup.
+
+        This is not a migration system and does not pretend to be: nullable additions only, which is
+        all SQLite portably supports anyway, and no drops, renames or backfills. The alternative for
+        a schema change was telling people to delete results.db, which for a store whose entire
+        purpose is that reports are durable is precisely the wrong instruction.
+        """
+        inspector = inspect(self._engine)
+        for table in (REPORTS, FINDINGS, REVIEWS, JOBS):
+            if not inspector.has_table(table.name):
+                continue
+            present = {column["name"] for column in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in present:
+                    continue
+                if not column.nullable:
+                    raise ResultsStoreUnavailable(
+                        f"{self.url}: table {table.name!r} predates column {column.name!r}, which "
+                        "is NOT NULL and cannot be added to existing rows. Rebuild the database."
+                    )
+                kind = column.type.compile(self._engine.dialect)
+                log.warning("adding missing column %s.%s (%s)", table.name, column.name, kind)
+                with self._engine.begin() as connection:
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE {table.name} ADD COLUMN {column.name} {kind}"
+                    )
 
     @staticmethod
     def _build_engine(url: str) -> Engine:
@@ -289,8 +336,8 @@ class SqlResultsStore:
 
     # --- writing --------------------------------------------------------------------------
 
-    def save(self, report: ComplianceReport) -> None:
-        """Persist one report and its findings in a single transaction.
+    def save(self, report: ComplianceReport, *, validation: ValidationReport | None = None) -> None:
+        """Persist one report, its findings and its ingestion validation in a single transaction.
 
         Atomic by necessity, not by preference: a `reports` row without its `findings` rows would
         read back as a report whose findings had all been reviewed away, which is a different claim
@@ -302,15 +349,18 @@ class SqlResultsStore:
         frozen deliverable frozen.
         """
         payload = report.model_dump(mode="json")
+        checks = validation.model_dump(mode="json") if validation is not None else None
         try:
-            self._write("save", lambda: self._save(report, payload))
+            self._write("save", lambda: self._save(report, payload, checks))
         except ResultsStoreUnavailable:
             # Held, not lost. By step 8 the run is already paid for.
             self.unsaved[report.report_id] = report
             raise
         self.unsaved.pop(report.report_id, None)
 
-    def _save(self, report: ComplianceReport, payload: dict[str, Any]) -> None:
+    def _save(
+        self, report: ComplianceReport, payload: dict[str, Any], checks: dict[str, Any] | None
+    ) -> None:
         with self._engine.begin() as connection:
             existing = connection.execute(
                 select(REPORTS.c.report_id).where(REPORTS.c.report_id == report.report_id)
@@ -325,6 +375,7 @@ class SqlResultsStore:
                     clean=report.clean,
                     report_json=json.dumps(payload),
                     schema_version=report.schema_version,
+                    validation_json=json.dumps(checks) if checks is not None else None,
                 ))
             # Findings are rewritten rather than merged: on the retry path they have never been
             # reviewed (the report was never readable), so there is no status to preserve.
@@ -569,6 +620,16 @@ class SqlResultsStore:
                 select(REPORTS.c.report_json).where(REPORTS.c.report_id == report_id)
             ).first()
         return json.loads(row[0]) if row else None
+
+    def validation_for(self, report_id: str) -> ValidationReport | None:
+        """What ingestion accepted, rescued and refused for this report's batch."""
+        with self._engine.connect() as connection:
+            row = connection.execute(
+                select(REPORTS.c.validation_json).where(REPORTS.c.report_id == report_id)
+            ).first()
+        if not row or not row[0]:
+            return None
+        return ValidationReport(**json.loads(row[0]))
 
     def list_reports(self, *, period: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         """The listing an API and a UI page from: header rows, never report bodies.

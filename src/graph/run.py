@@ -141,7 +141,9 @@ def _finish(prepared: _Prepared, final: dict[str, Any], store: ResultsStore | No
         raise RuntimeError(f"run {prepared.run_id} completed without producing a report")
 
     # --- step 8: persist -----------------------------------------------------------------
-    (store if store is not None else default_store()).save(report)
+    (store if store is not None else default_store()).save(
+        report, validation=prepared.validation
+    )
 
     result = RunResult(
         report=report,

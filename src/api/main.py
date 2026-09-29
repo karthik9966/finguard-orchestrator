@@ -190,7 +190,11 @@ class AuditAccepted(BaseModel):
     job_id: str
     status: Status
     batch: str
-    transactions: int = Field(description="Parsed during upload validation, before the audit ran")
+    # None on a dedup hit: nothing was parsed because nothing was run, and 0 would be a claim
+    # about the file rather than an absence of one.
+    transactions: int | None = Field(
+        default=None, description="Parsed during upload validation, before the audit ran"
+    )
     poll: str
     # True when these exact bytes were already submitted, so nothing was re-run and nothing
     # re-billed. The caller is looking at the first submission's job.
@@ -291,7 +295,7 @@ async def submit_audit(
             log.info("job %s reused for a re-post of %s", existing.job_id, name)
             accepted = AuditAccepted(
                 job_id=existing.job_id, status=existing.status, batch=existing.batch_name,
-                transactions=0, poll=f"/audits/{existing.job_id}", deduplicated=True,
+                transactions=None, poll=f"/audits/{existing.job_id}", deduplicated=True,
             )
             return await _maybe_wait(request, response, accepted, wait=wait, timeout=timeout)
 
@@ -424,6 +428,25 @@ def read_filed_report(report_id: str) -> ComplianceReport:
     if report is None:
         raise HTTPException(404, f"no report {report_id!r}")
     return report
+
+
+@app.get("/reports/{report_id}/validation", dependencies=PROTECTED)
+def read_validation(report_id: str) -> dict[str, Any]:
+    """What ingestion accepted, rescued and refused for this report's batch.
+
+    Separate from the report because it answers a different question -- not "what did we find" but
+    "what did we actually look at". A month whose report is clean because a third of it failed to
+    parse is not a clean month, and the count in the report is not enough to act on: an analyst has
+    to see *which* messages were lost to go and fix the source.
+    """
+    validation = reports().validation_for(report_id)
+    if validation is None:
+        if reports().stored(report_id) is None:
+            raise HTTPException(404, f"no report {report_id!r}")
+        # The report predates this being recorded, which is a different answer from "nothing was
+        # quarantined" and is said as such rather than returned as an empty, reassuring zero.
+        raise HTTPException(404, f"no ingestion record was kept for {report_id!r}")
+    return validation.model_dump(mode="json")
 
 
 @app.post("/findings/{finding_id}/review", dependencies=PROTECTED)

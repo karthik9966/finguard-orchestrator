@@ -1,187 +1,196 @@
-"""The auditor cockpit -- LLD §6's sections over the Phase 5 reasoning core.
+"""The auditor cockpit -- LLD §6's five sections, over the API.
 
-Everything the engine does is measurable from the CLI. This page exists because a compliance
-analyst is not going to read a terminal, and because the facts that make the output trustworthy are
-invisible in a JSON dump: *which candidate the money was spent on*, *which exact clause justified
-each finding*, and *which findings the review could not stand behind*.
+Everything the engine does is measurable from the CLI. This page exists because a compliance analyst
+is not going to read a terminal, and because the facts that make the output trustworthy are
+invisible in a JSON dump: *which clause justified each finding*, *which findings the review could
+not stand behind*, and *what the batch did not even contain*.
 
-Run with::
+It talks to the service over HTTP (`src/ui/client.py`) and imports nothing from the graph. Three
+reasons, each a thing that would otherwise be found in production: one execution path instead of
+two, the API's single worker instead of two analysts' concurrent audits contending for one vector
+store, and no way for a Streamlit rerun to bill money.
+
+Run the API first, then::
 
     uv run streamlit run src/ui/cockpit.py
 
-The run fires only from the button, never from a rerun -- see `RESULT_KEY`.
+Both need `API_AUTH_TOKEN`; the page says so plainly if it is missing.
 """
 
 from __future__ import annotations
 
-import hashlib
 import time
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from src.graph.graph import tracing_project
-from src.graph.run import BatchUnreadable, InMemoryResultsStore, stream_audit
-from src.ingestion.store import RULE_COLLECTION, VectorStoreClient
-from src.utils.swift_parser import parse_batch
+from src.config import get_settings
+from src.ui.client import ApiError, FinGuardClient
 
 st.set_page_config(page_title="FinGuard — Auditor Cockpit", page_icon="⚖️", layout="wide")
 
-# Streamlit re-executes this whole file on every widget interaction. Holding the finished run in
-# session state -- keyed by the batch's own bytes -- is what stops a checkbox from re-billing a
-# run. Re-uploading the identical file finds the result already there.
-RESULT_KEY = "audit_result"
-STORE_KEY = "results_store"
-UPLOAD_DIR = Path(st.__file__).parent.parent / ".finguard_uploads"
+# Streamlit re-executes this whole file on every widget interaction. The job id is what survives in
+# session state -- not the report, which is fetched fresh so a review recorded a moment ago is
+# visible immediately. Nothing here can start an audit except the button.
+JOB_KEY = "job_id"
+REVIEWER_KEY = "reviewer"
 
-# The real node names, because narrating the graph that actually executes is the point of a
-# reasoning tracker. Retrieval, grounding and critique repeat once per candidate.
-NODE_LABELS = {
-    "detection": "Screening for structuring / fan-in / fan-out / cycle / scatter-gather",
-    "retrieval": "Resolving binding obligations, then searching red-flag indicators",
-    "grounding": "Grounding the candidate in the retrieved law (reasoning model)",
-    "critic": "Faithfulness gate, then scoring how well the draft is supported",
-    "report": "Assembling the filing — no model, every field derived from the findings",
-}
+# The upload never touches disk in this process. What it used to do -- write into
+# `site-packages/.finguard_uploads/` and never clean up -- put run data inside the installed
+# environment, survived every restart, and grew without bound. The bytes now go straight to the API,
+# and the only temporary file is the API's own, which it deletes when the run ends.
+POLL_SECONDS = 1.0
+
 RISK_STYLE = {"high": st.error, "medium": st.warning, "low": st.success, "none": st.success}
-STATUS_ICON = {"pending_review": "✅", "needs_review": "⚠️"}
+STATUS_ICON = {
+    "pending_review": "🔍", "needs_review": "⚠️", "cleared": "✅",
+    "escalated": "🚩", "approved": "📝",
+}
+# What an analyst may do from each state, mirroring the store's own transition table. Shown rather
+# than enforced here -- the store is the authority and answers 409 -- but a button that can only
+# fail is worse than no button.
+ACTIONS = {
+    "pending_review": [("clear", "Clear"), ("escalate", "Escalate")],
+    "needs_review": [("clear", "Clear"), ("escalate", "Escalate")],
+    "escalated": [("approve", "Approve for filing"), ("clear", "Clear")],
+    "cleared": [],
+    "approved": [],
+}
 
 
-@st.cache_data(ttl=60, show_spinner="Reading the vector store...")
-def _counts() -> dict:
-    return VectorStoreClient(RULE_COLLECTION).counts()
+@st.cache_resource
+def api() -> FinGuardClient:
+    return FinGuardClient()
 
 
-def store() -> InMemoryResultsStore:
-    if STORE_KEY not in st.session_state:
-        st.session_state[STORE_KEY] = InMemoryResultsStore()
-    return st.session_state[STORE_KEY]
+def fail(error: ApiError) -> None:
+    """Say what an analyst can actually do about it."""
+    if error.status == 0:
+        st.error("The FinGuard API is not reachable.")
+        st.code("uv run uvicorn src.api.main:app --reload", language="bash")
+    elif error.status == 401:
+        st.error("The API rejected this token. Set `API_AUTH_TOKEN` to the service's own value.")
+    elif error.status == 503:
+        st.error(f"The service is not ready: {error.detail}")
+    else:
+        st.error(f"{error.status}: {error.detail}")
 
 
 # --- §6.1 the ingestion gate --------------------------------------------------------------
 
 with st.sidebar:
     st.header("Ingestion gate")
+
+    if not get_settings().api_auth_token:
+        st.error("`API_AUTH_TOKEN` is not set, so every call will be refused.")
+        st.code("openssl rand -hex 32", language="bash")
+        st.stop()
+
     try:
-        payload = _counts()
-    except Exception as error:  # noqa: BLE001 - the empty state is the common case, show it
-        st.error(f"Collection {RULE_COLLECTION!r} is not available.")
-        st.code("uv run finguard-store --rules", language="bash")
-        st.caption(f"{type(error).__name__}: {error}")
+        health = api().health()
+    except ApiError as error:
+        fail(error)
         st.stop()
 
     left, right = st.columns(2)
-    left.metric("Chunks", f"{payload['total']:,}")
-    right.metric("Binding", f"{payload['authority'].get('binding', 0):,}")
-    st.caption(f"`{RULE_COLLECTION}` · US BSA/AML corpus")
+    left.metric("Chunks", f"{health['vectors']:,}")
+    right.metric("Binding", f"{health['by_authority'].get('binding', 0):,}")
+    st.caption(f"`{health['collection']}` · US BSA/AML corpus · queue {health['queue_depth']}")
 
     with st.expander("Corpus composition"):
         # §6.1: a citation is only checkable if you know which corpus stands behind it. Tier and
-        # authority are shown separately because they are different claims -- tier says what kind
-        # of document the text came from, authority says whether it binds.
+        # authority are different claims -- tier says what kind of document the text came from,
+        # authority says whether it *binds* -- so they are shown separately.
         st.dataframe(
-            pd.DataFrame(
-                [{"tier": tier, "chunks": count} for tier, count in sorted(payload["tier"].items())]
-            ),
-            hide_index=True, use_container_width=True,
+            pd.DataFrame([
+                {"tier": tier, "chunks": count}
+                for tier, count in sorted(health["by_tier"].items())
+            ]),
+            hide_index=True, width="stretch",
         )
 
     st.divider()
     st.subheader("Transaction batch")
     upload = st.file_uploader("MT103 batch log", type=["pdf", "txt"], label_visibility="collapsed")
+    force = st.checkbox(
+        "Re-audit if already seen", value=False,
+        help="The same file is normally answered from the existing audit rather than re-run and "
+             "re-billed. Tick this to run it again -- worth doing after the corpus is rebuilt.",
+    )
 
-    batch_path: Path | None = None
-    if upload is not None:
-        UPLOAD_DIR.mkdir(exist_ok=True)
-        batch_path = UPLOAD_DIR / upload.name
-        batch_path.write_bytes(upload.getvalue())
+    if upload is not None and st.button("Run audit", type="primary", width="stretch"):
         try:
-            # Validated here, not two nodes into a paid run: a file that yields no transactions is
-            # rejected in the sidebar for free.
-            preview = parse_batch(batch_path, strict=False)
-        except Exception as error:  # noqa: BLE001
-            st.error(f"Not a readable MT103 batch: {error}")
+            accepted = api().submit(upload.name, upload.getvalue(), force=force)
+        except ApiError as error:
+            fail(error)
             st.stop()
-
-        if not preview.wires:
-            st.error("No transactions could be parsed from this file.")
-            st.stop()
-
-        st.success(f"{preview.parsed} of {preview.declared_messages or preview.parsed} messages")
-        st.caption(
-            f"{min(w.value_date for w in preview.wires)} to "
-            f"{max(w.value_date for w in preview.wires)}"
-        )
-        if preview.failures:
-            st.warning(
-                f"{len(preview.failures)} message(s) refused — the light-model fallback will "
-                "attempt each once, then quarantine it"
-            )
+        st.session_state[JOB_KEY] = accepted["job_id"]
+        if accepted.get("deduplicated"):
+            st.info("These exact bytes were already audited — showing that run. Nothing was billed.")
 
     st.divider()
-    project = tracing_project()
-    st.caption(f"Tracing: {f'LangSmith `{project}`' if project else 'off'}")
+    st.subheader("Past audits")
+    try:
+        # Journey 3's entry point: "an officer requests a past report (by month or case)".
+        stored = api().reports(limit=25)
+    except ApiError:
+        stored = []
+    if stored:
+        chosen = st.selectbox(
+            "Open a stored report",
+            options=[""] + [f"{row['period']} · {row['report_id']}" for row in stored],
+            format_func=lambda label: label or "—",
+        )
+        if chosen:
+            st.session_state[JOB_KEY] = None
+            st.session_state["report_id"] = chosen.split(" · ")[1]
+
+    st.caption(f"{health['reports_stored']} report(s) on record")
 
 
 # --- §6.2 the active audit workspace ------------------------------------------------------
 
 st.title("Active audit workspace")
 
-if batch_path is None:
-    st.info("Upload an MT103 batch log in the sidebar to begin.")
+job_id = st.session_state.get(JOB_KEY)
+report_id = st.session_state.get("report_id")
+
+if job_id:
+    # Polling, because the API returns a job id rather than holding the connection -- an audit runs
+    # per candidate and a held connection is a timeout waiting for a proxy to find it.
+    status = st.empty()
+    with st.spinner("Auditing…"):
+        while True:
+            try:
+                job = api().audit(job_id)
+            except ApiError as error:
+                fail(error)
+                st.stop()
+            if job["status"] != "running":
+                break
+            status.info(f"**{job['status']}** · {job['batch']} · submitted {job['submitted_at']}")
+            time.sleep(POLL_SECONDS)
+    status.empty()
+
+    if job["status"] == "failed":
+        st.error(f"The audit failed: {job['error']}")
+        st.stop()
+    report_id = job["report"]["report_id"]
+    st.session_state["report_id"] = report_id
+    st.session_state[JOB_KEY] = None
+
+if not report_id:
+    st.info("Upload an MT103 batch log in the sidebar, or open a stored report.")
     st.caption("Sample batches live in `data/processed/ledger/`.")
     st.stop()
 
-fingerprint = hashlib.sha256(upload.getvalue()).hexdigest()[:16]
-held = st.session_state.get(RESULT_KEY)
-
-if st.button("Run audit", type="primary"):
-    timings: dict[str, float] = {}
-    counts: dict[str, int] = {}
-    started = time.perf_counter()
-    result = None
-
-    with st.container(border=True):
-        st.caption("Reasoning graph — retrieval, grounding and review repeat per candidate")
-        progress = st.empty()
-        try:
-            for node, payload in stream_audit(batch_path, store=store(), tags=["COCKPIT"]):
-                if node == "__final__":
-                    result = payload
-                    break
-                elapsed = time.perf_counter() - started
-                timings[node] = timings.get(node, 0.0) + (elapsed - sum(timings.values()))
-                counts[node] = counts.get(node, 0) + 1
-                total = len(payload.get("candidates") or [])
-                position = min(payload.get("current_index", 0) + 1, max(total, 1))
-                progress.success(
-                    f"**{node}** ×{counts[node]} — {NODE_LABELS.get(node, node)}"
-                    + (f"  ·  candidate {position} of {total}" if total else "")
-                )
-        except BatchUnreadable as error:
-            st.error(str(error))
-            st.stop()
-
-    st.session_state[RESULT_KEY] = {
-        "fingerprint": fingerprint, "result": result, "timings": timings, "counts": counts,
-    }
-    held = st.session_state[RESULT_KEY]
-
-if held is None:
-    st.info("Press **Run audit** to analyse this batch. A clean batch costs $0.0000.")
+try:
+    # Fetched fresh on every rerun, never cached: a review recorded a second ago has to be visible,
+    # and this is the *join* endpoint, so it shows where each finding now stands.
+    report = api().report(report_id)
+except ApiError as error:
+    fail(error)
     st.stop()
-
-if held["fingerprint"] != fingerprint:
-    st.warning(
-        "Showing the previous audit — the batch changed. Press **Run audit** to analyse this one."
-    )
-
-result = held["result"]
-if result is None:
-    st.error("The run produced no report.")
-    st.stop()
-report = result.report
 
 
 # --- §6.3 the compliance summary ----------------------------------------------------------
@@ -190,18 +199,14 @@ st.divider()
 st.subheader("Compliance summary")
 
 RISK_STYLE.get(report.risk_rating, st.info)(
-    f"**Risk: {report.risk_rating}** · {len(report.findings)} finding(s) from "
-    f"{result.candidates} candidate(s) · {report.needs_review_count} needing review"
+    f"**Risk: {report.risk_rating}** · {report.period} · {len(report.findings)} finding(s) · "
+    f"{report.needs_review_count} the engine could not ground"
 )
 if report.clean:
     st.caption(
         "No qualifying pattern was found, so no obligation was engaged and no model was consulted."
     )
-if report.quarantined_count:
-    st.warning(
-        f"{report.quarantined_count} message(s) could not be parsed and were excluded from "
-        "screening. This review does not cover them."
-    )
+st.caption(f"`{report.report_id}` · filed {report.generated_at:%Y-%m-%d %H:%M} UTC")
 
 if report.findings:
     st.dataframe(
@@ -218,72 +223,167 @@ if report.findings:
             }
             for f in report.findings
         ]),
-        hide_index=True, use_container_width=True,
+        hide_index=True, width="stretch",
     )
 
 st.markdown(report.summary)
 
 
-# --- §6.4 the auditor's citations drawer --------------------------------------------------
+# --- §6.4 the review loop and the citations drawer ----------------------------------------
 
-st.divider()
-st.subheader("Verified citations")
-st.caption(
-    "Every clause below was carried from the retrieval bundle the model was shown — not "
-    "re-searched afterwards, so this is the text the finding was actually drafted against."
-)
-
-if not report.source_document_refs:
-    st.info("This report cites no clauses.")
-else:
-    for citation in report.source_document_refs:
-        with st.expander(f"{citation.source_id} — {citation.section_ref}"):
-            st.write(citation.text_excerpt)
-            st.caption(f"`{citation.chunk_id}`")
-
-
-# --- §6.5 telemetry & diagnostics ---------------------------------------------------------
-
-st.divider()
-if st.toggle("Telemetry & diagnostics"):
-    st.caption(f"run_id `{result.run_id}` · report_id `{report.report_id}`")
-    st.caption(f"Ingestion: {result.validation.summary()}")
-
-    usage = result.usage
-    if not usage.nodes:
-        # The free path is a result, not an empty table: detection found nothing to audit and no
-        # model was ever constructed.
-        st.success("**$0.0000** — no model was called. The batch cleared the free path.")
-    else:
-        total = usage.total_cost
-        columns = st.columns(4)
-        columns[0].metric("Cost", f"${total:.4f}" if total is not None else "unpriced")
-        columns[1].metric("Per candidate",
-                          f"${result.cost_per_candidate:.4f}"
-                          if result.cost_per_candidate is not None else "—")
-        columns[2].metric("Model calls", usage.calls)
-        columns[3].metric("Tokens", f"{usage.total_tokens:,}")
-        st.dataframe(pd.DataFrame(usage.rows()), hide_index=True, use_container_width=True)
-
-    st.dataframe(
-        pd.DataFrame([
-            {"node": node, "visits": held["counts"].get(node, 0),
-             "seconds": round(seconds, 2), "free": node in {"detection", "retrieval", "report"}}
-            for node, seconds in held["timings"].items()
-        ]),
-        hide_index=True, use_container_width=True,
-    )
+if report.findings:
+    st.divider()
+    st.subheader("Findings, evidence and review")
     st.caption(
-        "Detection, retrieval and report assembly cost nothing — the deterministic majority of "
-        "the pipeline. Grounding and review are the only paid nodes."
+        "Every clause below was carried from the retrieval bundle the model was shown — not "
+        "re-searched afterwards, so this is the text the finding was actually drafted against. "
+        "Reviewing a finding moves its status and appends to its history; the filed report is "
+        "never edited."
     )
 
-    needs_review = [f for f in report.findings if f.status == "needs_review"]
-    if needs_review:
-        st.warning(
-            "Unresolved after review:\n"
-            + "\n".join(
-                f"- **{f.candidate.pattern_type}**: " + "; ".join(f.review_notes)
-                for f in needs_review
+    reviewer = st.text_input(
+        "Your reviewer id", value=st.session_state.get(REVIEWER_KEY, ""),
+        placeholder="analyst@bank", help="Recorded against every review action, permanently.",
+    )
+    st.session_state[REVIEWER_KEY] = reviewer
+
+    for finding in report.findings:
+        icon = STATUS_ICON.get(finding.status, "")
+        with st.expander(
+            f"{icon} {finding.candidate.pattern_type} · {finding.risk_level} risk · "
+            f"{finding.status} · {len(finding.candidate.member_txn_refs)} transactions"
+        ):
+            st.markdown(finding.narrative)
+
+            if finding.status == "needs_review" and finding.review_notes:
+                st.warning("**Why this needs a human**\n\n" + "\n".join(
+                    f"- {note}" for note in finding.review_notes
+                ))
+            elif finding.review_notes:
+                st.caption("History: " + " · ".join(finding.review_notes))
+
+            for label, citations in (
+                ("Binding obligations", finding.applicable_regulations),
+                ("Red-flag indicators", finding.red_flag_indicators),
+            ):
+                if not citations:
+                    continue
+                st.markdown(f"**{label}**")
+                for citation in citations:
+                    with st.container(border=True):
+                        st.markdown(f"`{citation.source_id}` **{citation.section_ref}**")
+                        st.write(citation.text_excerpt)
+                        st.caption(f"`{citation.chunk_id}`")
+
+            actions = ACTIONS.get(finding.status, [])
+            if not actions:
+                st.caption(f"This finding is {finding.status} — no further action is available.")
+                continue
+
+            note = st.text_input(
+                "Note (recorded with the decision)", key=f"note-{finding.finding_id}",
+                placeholder="why you are clearing or escalating this",
             )
+            columns = st.columns(len(actions))
+            for column, (action, label) in zip(columns, actions):
+                if not column.button(label, key=f"{action}-{finding.finding_id}",
+                                     width="stretch"):
+                    continue
+                if not reviewer.strip():
+                    st.error("Enter your reviewer id first — every review is attributed.")
+                    continue
+                try:
+                    api().review(finding.finding_id, action, reviewer=reviewer.strip(), note=note)
+                except ApiError as error:
+                    fail(error)
+                else:
+                    st.rerun()
+
+
+# --- §6.5 what the batch did not contain, and diagnostics ---------------------------------
+
+st.divider()
+st.subheader("Ingestion record")
+
+if report.quarantined_count:
+    st.error(
+        f"**{report.quarantined_count} message(s) could not be parsed** and were excluded from "
+        "screening. This review does not cover them."
+    )
+
+try:
+    validation = api().validation(report.report_id)
+except ApiError as error:
+    validation = None
+    fail(error)
+
+if validation is None:
+    st.caption("No ingestion record was kept for this report.")
+else:
+    columns = st.columns(4)
+    columns[0].metric("Parsed", validation.parsed)
+    columns[1].metric("Declared", validation.declared if validation.declared is not None else "—")
+    columns[2].metric("Rescued by the fallback", validation.rescued)
+    columns[3].metric("Quarantined", len(validation.quarantined))
+
+    if validation.rescued:
+        st.caption(
+            f"{validation.rescued} message(s) the strict parser refused were read by the "
+            "light model and are tagged `llm_fallback`. The fallback runs once per message and "
+            "never invents a field."
         )
+    if validation.quarantined:
+        # The point of the panel: a count is not actionable. An analyst told twelve messages were
+        # lost needs to see which twelve to go and fix the source.
+        st.markdown("**Messages neither the parser nor the fallback could read**")
+        st.dataframe(
+            pd.DataFrame([
+                {
+                    "position": message.ordinal,
+                    "reference": message.reference or "—",
+                    "reason": message.reason,
+                    "fallback tried": message.fallback_attempted,
+                }
+                for message in validation.quarantined
+            ]),
+            hide_index=True, width="stretch",
+        )
+        with st.expander("Raw text of each quarantined message"):
+            for message in validation.quarantined:
+                st.caption(f"#{message.ordinal} — {message.reason}")
+                st.code(message.raw or "(empty)", language="text")
+    elif validation.complete:
+        st.success("Every message the statement declared came back as a record.")
+
+with st.expander("Diagnostics"):
+    st.caption(f"report `{report.report_id}` · run `{report.run_id}` · schema "
+               f"{report.schema_version}")
+    st.caption(
+        f"{len(report.source_document_refs)} distinct clause(s) across "
+        f"{len(report.findings)} finding(s)"
+    )
+    if st.toggle("Show the report exactly as filed (no review applied)"):
+        # The immutability claim, made checkable from the UI rather than asserted in a docstring.
+        try:
+            as_filed = api().filed(report.report_id)
+        except ApiError as error:
+            fail(error)
+        else:
+            st.caption(
+                "`report_json` is written once and never updated. Review changes where the work "
+                "stands, not what the engine concluded."
+            )
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "pattern": f.candidate.pattern_type,
+                        "as filed": f.status,
+                        "now": next(
+                            (g.status for g in report.findings if g.finding_id == f.finding_id),
+                            "—",
+                        ),
+                    }
+                    for f in as_filed.findings
+                ]),
+                hide_index=True, width="stretch",
+            )

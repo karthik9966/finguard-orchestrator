@@ -12,7 +12,14 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.models import Candidate, Citation, ComplianceReport, Finding, RuleChunk
+from src.models import (
+    Candidate,
+    Citation,
+    ComplianceReport,
+    Finding,
+    RuleChunk,
+    ValidationReport,
+)
 from src.store.results import (
     FINDINGS,
     REPORTS,
@@ -94,10 +101,13 @@ def test_both_stores_satisfy_the_protocol():
 
 def test_the_schema_is_the_one_the_lld_specifies():
     """Column-for-column, because a store whose shape drifts from the design document is a store
-    nobody can reason about from the design document."""
+    nobody can reason about from the design document. The two additions are deliberate and named
+    here so the drift is a decision rather than an accident: `validation_json` carries the ingestion
+    record the quarantine panel needs, and `ordinal` keeps the findings in the order they were
+    filed."""
     assert set(REPORTS.c.keys()) == {
         "report_id", "run_id", "period", "generated_at", "risk_rating", "clean",
-        "report_json", "schema_version",
+        "report_json", "schema_version", "validation_json",
     }
     assert set(FINDINGS.c.keys()) == {
         "finding_id", "report_id", "candidate_id", "pattern_type", "risk_level", "confidence",
@@ -223,6 +233,62 @@ def test_a_write_failure_holds_the_report_for_re_save(store, monkeypatch):
 def test_a_successful_save_holds_nothing(store):
     store.save(report(finding(candidate("a"))))
     assert store.unsaved == {}
+
+
+# --- the ingestion record -----------------------------------------------------------------
+
+
+def test_the_ingestion_record_is_saved_with_the_report(store):
+    """`ComplianceReport` carries only a count, and a count is not actionable: an analyst told
+    twelve messages were lost needs to see which twelve."""
+    from src.models import QuarantinedMessage, ValidationReport
+
+    validation = ValidationReport(
+        batch="2023-06.txt", declared=501, parsed=500, rescued=2,
+        quarantined=[QuarantinedMessage(
+            ordinal=317, reason="missing required tag :32A:", raw=":20:FGO23060100317",
+            fallback_attempted=True,
+        )],
+    )
+    filed = report(finding(candidate("a")))
+    store.save(filed, validation=validation)
+
+    restored = store.validation_for(filed.report_id)
+    assert restored is not None
+    assert (restored.parsed, restored.declared, restored.rescued) == (500, 501, 2)
+    assert restored.quarantined[0].raw == ":20:FGO23060100317"
+    assert restored.complete is False
+
+
+def test_a_report_saved_without_one_has_none(store):
+    """"Nothing was kept" and "nothing was quarantined" are different answers."""
+    filed = report(finding(candidate("a")))
+    store.save(filed)
+    assert store.validation_for(filed.report_id) is None
+
+
+def test_a_column_added_in_a_later_phase_reaches_an_older_database(tmp_path):
+    """`create_all` creates missing tables and never alters existing ones, so a column added later
+    is invisible on a database written earlier -- and the failure is a confusing `no such column` on
+    a query rather than on startup. The alternative for a schema change was telling people to delete
+    results.db, which for a store whose whole purpose is durable reports is the wrong instruction."""
+    import sqlite3
+
+    path = tmp_path / "older.db"
+    older = sqlite3.connect(path)
+    older.execute(
+        "CREATE TABLE reports (report_id VARCHAR(128) NOT NULL PRIMARY KEY, "
+        "run_id VARCHAR(128) NOT NULL, period VARCHAR(16) NOT NULL, "
+        "generated_at VARCHAR(64) NOT NULL, risk_rating VARCHAR(16) NOT NULL, "
+        "clean BOOLEAN NOT NULL, report_json TEXT NOT NULL, schema_version VARCHAR(16) NOT NULL)"
+    )
+    older.commit()
+    older.close()
+
+    opened = SqlResultsStore(f"sqlite:///{path}")
+    filed = report()
+    opened.save(filed, validation=ValidationReport(parsed=1))
+    assert opened.validation_for(filed.report_id).parsed == 1
 
 
 # --- the review loop --------------------------------------------------------------------------

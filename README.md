@@ -73,12 +73,13 @@ uv run finguard-audit --mermaid          # mermaid source, for docs or mermaid.l
 uv run finguard-audit --png docs/graph.png   # posts the node names to mermaid.ink to render
 ```
 
-Every one of them is also reachable the long way -- `uv run python -m src.graph.graph` is exactly
+Every one of them is also reachable the long way -- `uv run python -m src.graph.run` is exactly
 `uv run finguard-audit` -- which is what to use if you are running from a checkout you have not
-synced. The Streamlit panel is not a console script, since it needs Streamlit's own runner:
+synced. The two services are not console scripts, since each needs its own runner:
 
 ```bash
-uv run streamlit run src/ui/ingestion_panel.py
+API_AUTH_TOKEN=$(openssl rand -hex 32) uv run uvicorn src.api.main:app --reload
+uv run streamlit run src/ui/cockpit.py          # the cockpit talks to that API over HTTP
 ```
 
 ## Data
@@ -199,8 +200,12 @@ reranker prunes 15 → 4; it cannot add. No prompt or critic loop recovers those
 uv run finguard-store                           # build the `regulations` collection
 uv run finguard-store --stats                   # counts by corpus and tier
 uv run finguard-store --query "transactions structured to avoid reporting thresholds"
-uv run streamlit run src/ui/ingestion_panel.py  # ingestion metrics + rule inventory
 ```
+
+The cockpit's sidebar shows the same thing for the collection the engine actually cites from
+(`rule_chunks`), which is why the separate ingestion page is gone: it read the pre-migration
+`regulations` collection and would report 12,273 ADGM chunks as the active corpus while the engine
+cited 731 US ones.
 
 **One collection, 12,273 vectors, 46 documents.** Cosine space, idempotent upsert keyed on
 `chunk_id`, and every chunk carries the metadata that makes a citation checkable:

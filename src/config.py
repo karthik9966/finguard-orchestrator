@@ -134,6 +134,9 @@ class Settings(BaseSettings):
     api_auth_token: str = ""
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    # Where the cockpit dials the API. Separate from api_host because that is a *bind* address:
+    # 0.0.0.0 means "every interface" to a server and is not a thing a client can connect to.
+    api_base_url: str = "http://127.0.0.1:8000"
 
     # --- meta -------------------------------------------------------------------------------
     config_path: Path = PROJECT_ROOT / "config.yaml"
