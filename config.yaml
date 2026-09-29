@@ -144,6 +144,18 @@ reasoning:
   # 0.395), so it would drop the real findings first.
 
 # ---------------------------------------------------------------------------------------------
+# Persistence -- LLD §3.2, §6 RESULTS_STORE_WRITE_FAILURE
+# ---------------------------------------------------------------------------------------------
+persistence:
+  # A write failure is retryable infrastructure, not a bad report. The run has already been paid
+  # for by the time step 8 is reached -- five candidates of grounding and review -- so throwing the
+  # result away because the disk was busy for 300ms would be the most expensive possible response.
+  # After the attempts are exhausted the report is *held* in memory and the error surfaced, so a
+  # caller can re-save rather than re-run.
+  write_attempts: 3
+  write_backoff_seconds: 0.5
+
+# ---------------------------------------------------------------------------------------------
 # Chunking -- LLD §2.1
 # ---------------------------------------------------------------------------------------------
 chunking:

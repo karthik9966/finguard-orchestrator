@@ -31,6 +31,10 @@ dependencies = [
     # imports it at module scope and USE_RERANKER defaults on, so a `--no-dev` install without
     # it dies at import. Caught by the first real Docker build, which is what --no-dev does.
     "flashrank>=0.2.10",
+    # Phase 6a §3.2 — the results store. Already present transitively via langchain-community, but
+    # `src/store/results.py` imports it directly and the LLD's RESULTS_DB_URL is the whole reason
+    # it is here: SQLite in v1 and Postgres in production is a URL change and nothing else.
+    "sqlalchemy",
 ]
 
 [dependency-groups]

@@ -7,12 +7,14 @@ to see. These tests hold both seams.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 from src.graph import run
-from src.graph.run import BatchUnreadable, InMemoryResultsStore, ResultsStore, audit_batch
+from src.graph.run import BatchUnreadable, audit_batch
+from src.store import InMemoryResultsStore, ResultsStore
 from src.models import ComplianceReport, TransactionRecord, ValidationReport
 
 LEDGER = Path(__file__).resolve().parents[1] / "data" / "processed" / "ledger"
@@ -91,6 +93,19 @@ def test_a_file_that_yields_no_records_is_a_client_error_not_a_clean_report(tmp_
 # --- steps 2-3: what reaches the graph --------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def never_the_repo_database(monkeypatch, tmp_path):
+    """`audit_batch` now persists by default, which is right for a run and wrong for a test that
+    did not ask for a database. Pointed at a temp file rather than stubbed, so the default path is
+    the one being exercised."""
+    monkeypatch.setenv("RESULTS_DB_URL", f"sqlite:///{tmp_path / 'results.db'}")
+    from src.config import reset_caches
+
+    reset_caches()
+    yield
+    reset_caches()
+
+
 def test_the_period_comes_from_the_records_not_the_filename(tmp_path):
     """A filename is a label a human chose; the records are what is being audited."""
     mislabelled = tmp_path / "2023-01_whatever.txt"
@@ -159,6 +174,22 @@ def test_a_finished_report_is_saved_under_its_own_id(tmp_path):
     audit_batch(batch, graph=StubGraph(report), store=store,
                 ingestor=StubIngestor([record("FGO23060100001", "2023-06-14T09:00:00")]))
     assert store.get(report.report_id) is report
+
+
+def test_a_run_with_no_store_named_still_persists(tmp_path):
+    """Phase 6a changed this default. A run that silently discards its report is not what anyone
+    wants from an audit engine, so it now takes an explicit InMemoryResultsStore to get one."""
+    from src.store import SqlResultsStore
+
+    batch = tmp_path / "2023-06.txt"
+    batch.write_text("x")
+    report = report_for()
+    audit_batch(batch, graph=StubGraph(report),
+                ingestor=StubIngestor([record("FGO23060100001", "2023-06-14T09:00:00")]))
+
+    # Read back through a *separate* store object on the same URL -- the run's own store is gone.
+    reopened = SqlResultsStore(os.environ["RESULTS_DB_URL"])
+    assert reopened.get(report.report_id) is not None
 
 
 def test_a_run_that_produces_no_report_is_an_error_not_a_none(tmp_path):

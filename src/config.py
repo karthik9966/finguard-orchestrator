@@ -272,6 +272,11 @@ class ReasoningConfig(BaseModel):
         return self
 
 
+class PersistenceConfig(BaseModel):
+    write_attempts: int = Field(ge=1)
+    write_backoff_seconds: float = Field(ge=0.0)
+
+
 class ChunkingConfig(BaseModel):
     min_chars: int = Field(gt=0)
     max_chars: int = Field(gt=0)
@@ -310,6 +315,7 @@ class Config(BaseModel):
     retrieval: RetrievalConfig
     detection: DetectionConfig
     reasoning: ReasoningConfig
+    persistence: PersistenceConfig
     chunking: ChunkingConfig
     ingestion: IngestionConfig
     pattern_to_obligations: dict[PatternType, list[ObligationRef]]

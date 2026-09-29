@@ -31,3 +31,9 @@ docs/*
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# The results store (LLD §8's RESULTS_DB_URL default). Run output, not source: it holds the
+# reports this machine happened to produce, and two developers' copies would conflict on every row.
+results.db
+results.db-journal
+results.db-wal

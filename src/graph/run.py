@@ -8,9 +8,10 @@ error, and it should be reported as one before a run id is minted, a vector stor
 node is entered. Persistence is outside for the mirror reason: a report is the run's product, and
 where it is stored is not a decision the reasoning core should be able to see.
 
-`ResultsStore` is therefore a Protocol with an in-memory default. Phase 6a puts SQLite behind it
-with no change to any caller here, and the seam gets exercised by tests now rather than designed
-blind later.
+`ResultsStore` is therefore a Protocol, and it lives in `src/store` rather than here: the
+orchestrator depends on the abstraction, not the other way round. Phase 6a put SQLite behind it, and
+the default is now that store -- a run that persists nothing is not what anyone wants from an audit
+engine, so it takes an explicit `InMemoryResultsStore` to get one.
 
 Both the CLI and the API enter through `audit_batch`, so there is one execution path and not two
 that drift.
@@ -21,15 +22,15 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
-from src.config import get_config
 from src.graph.cost import UsageLedger
 from src.graph.graph import build_graph, new_run_id, run_config, tracing_project
 from src.ingestion.batch import TransactionBatchIngestor
 from src.models import ComplianceReport, TransactionRecord, ValidationReport, initial_state
+from src.store import ResultsStore, ResultsStoreUnavailable, default_store
 
 log = logging.getLogger(__name__)
 
@@ -40,37 +41,6 @@ class BatchUnreadable(ValueError):
     """LLD §6's one loud failure. Every other error in a run is per-candidate and survivable;
     a batch nothing could be read from has no partial result worth reporting, and pretending
     otherwise would produce a clean report for a file that never parsed."""
-
-
-@runtime_checkable
-class ResultsStore(Protocol):
-    """Where a finished report goes (LLD §5.1 step 8).
-
-    A Protocol rather than a base class: the API's registry, Phase 6a's SQLite table and the
-    in-memory default below have nothing in common to inherit, and a `save`/`get` pair is the whole
-    contract the orchestrator depends on.
-    """
-
-    def save(self, report: ComplianceReport) -> None: ...
-
-    def get(self, report_id: str) -> ComplianceReport | None: ...
-
-
-@dataclass
-class InMemoryResultsStore:
-    """The default. Sufficient for a CLI run, and honest about being nothing more: a process
-    restart loses it, which is exactly what Phase 6a's SQLite store exists to fix."""
-
-    reports: dict[str, ComplianceReport] = field(default_factory=dict)
-
-    def save(self, report: ComplianceReport) -> None:
-        self.reports[report.report_id] = report
-
-    def get(self, report_id: str) -> ComplianceReport | None:
-        return self.reports.get(report_id)
-
-    def latest(self) -> ComplianceReport | None:
-        return next(reversed(self.reports.values()), None) if self.reports else None
 
 
 @dataclass
@@ -171,7 +141,7 @@ def _finish(prepared: _Prepared, final: dict[str, Any], store: ResultsStore | No
         raise RuntimeError(f"run {prepared.run_id} completed without producing a report")
 
     # --- step 8: persist -----------------------------------------------------------------
-    (store or InMemoryResultsStore()).save(report)
+    (store if store is not None else default_store()).save(report)
 
     result = RunResult(
         report=report,
@@ -247,10 +217,11 @@ def _upper_bound_candidates(records: list[TransactionRecord]) -> int:
 # --- CLI ------------------------------------------------------------------------------------
 
 
-def print_run(result: RunResult) -> None:
+def print_run(result: RunResult, *, stored_at: str = "") -> None:
     report = result.report
     project = tracing_project()
     print(f"\nrun_id     : {result.run_id}")
+    print(f"report_id  : {report.report_id}" + (f"  ->  {stored_at}" if stored_at else ""))
     print(f"tracing    : {f'LangSmith project {project!r}' if project else 'off'}")
     print(f"batch      : {report.period} · {result.records} record(s)")
     print(f"ingested   : {result.validation.summary()}")
@@ -297,13 +268,19 @@ def main() -> int:
     if not args.batch:
         parser.error("--batch is required (or use --mermaid/--ascii/--png to draw the graph)")
 
+    store = default_store()
     try:
-        result = audit_batch(args.batch, tags=args.tag)
+        result = audit_batch(args.batch, tags=args.tag, store=store)
     except BatchUnreadable as error:
         print(f"error: {error}")
         return 2
+    except ResultsStoreUnavailable as error:
+        # The audit succeeded and the write did not. Say which, because the two need different
+        # responses and only one of them costs money again.
+        print(f"error: {error}\nthe report is held in memory only -- this run was not persisted")
+        return 3
 
-    print_run(result)
+    print_run(result, stored_at=getattr(store, "url", ""))
 
     if args.json:
         payload = result.report.model_dump(mode="json")

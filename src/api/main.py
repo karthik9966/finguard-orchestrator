@@ -25,9 +25,10 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from src.graph.graph import new_run_id
-from src.graph.run import BatchUnreadable, InMemoryResultsStore, audit_batch
+from src.graph.run import BatchUnreadable, audit_batch
 from src.ingestion.store import RULE_COLLECTION, VectorStoreClient
 from src.models import ComplianceReport
+from src.store import InvalidTransition, ResultsStoreUnavailable, SqlResultsStore
 from src.utils.swift_parser import parse_batch
 
 app = FastAPI(
@@ -42,9 +43,20 @@ app = FastAPI(
 # limitation is stated rather than hidden behind an interface that pretends otherwise.
 AUDITS: dict[str, dict[str, Any]] = {}
 
-# LLD §5.1 step 8. In-memory for now, and swapped for SQLite in Phase 6a with no change here --
-# which is the whole reason `ResultsStore` is a protocol rather than a concrete class.
-REPORTS = InMemoryResultsStore()
+# LLD §5.1 step 8. SQLite at RESULTS_DB_URL, so a report outlives the process that produced it --
+# the AUDITS dict above does not, and Phase 6b retires it.
+#
+# Built on first use rather than at import. Constructing it creates the database file, and a module
+# that writes to disk merely by being imported is a module that leaves a results.db beside every
+# test run and every `--help`.
+_STORE: SqlResultsStore | None = None
+
+
+def reports() -> SqlResultsStore:
+    global _STORE
+    if _STORE is None:
+        _STORE = SqlResultsStore()
+    return _STORE
 
 Status = Literal["running", "complete", "failed"]
 
@@ -80,7 +92,7 @@ def _run(audit_id: str, batch_path: Path) -> None:
     """
     record = AUDITS[audit_id]
     try:
-        result = audit_batch(batch_path, run_id=audit_id, store=REPORTS, tags=["API"])
+        result = audit_batch(batch_path, run_id=audit_id, store=reports(), tags=["API"])
         total = result.usage.total_cost
         record.update(
             status="complete",
@@ -95,6 +107,11 @@ def _run(audit_id: str, batch_path: Path) -> None:
     except BatchUnreadable as error:
         # LLD §6's one loud failure, reported as what it is: the client's file, not our fault.
         record.update(status="failed", error=str(error))
+    except ResultsStoreUnavailable as error:
+        # The run succeeded and the write did not. The report is held by the store for re-save, so
+        # this is recoverable without re-billing the audit -- say so rather than reporting a
+        # generic failure that invites a retry of the whole thing.
+        record.update(status="failed", error=f"{error} (the report is held for re-save)")
     except Exception as error:  # noqa: BLE001 - reported to the caller, not swallowed
         record.update(status="failed", error=f"{type(error).__name__}: {error}")
     finally:
@@ -123,6 +140,7 @@ def health() -> dict[str, Any]:
         "by_tier": payload["tier"],
         "by_authority": payload["authority"],
         "audits_held": len(AUDITS),
+        "reports_stored": reports().counts()["reports"],
     }
 
 
@@ -182,9 +200,77 @@ def read_audit(audit_id: str) -> AuditResult:
 
 @app.get("/audits")
 def list_audits() -> list[dict[str, Any]]:
-    """Everything this process has run, newest first."""
+    """Everything this process has run, newest first. In-process only -- see AUDITS."""
     return sorted(
         ({k: v for k, v in record.items() if k != "report"} for record in AUDITS.values()),
         key=lambda record: record["submitted_at"],
         reverse=True,
     )
+
+
+# --- reports, which outlive the process (Journey 3) --------------------------------------
+
+
+@app.get("/reports")
+def list_reports(period: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    """Stored reports, newest first, optionally one period. Header rows, never report bodies."""
+    return reports().list_reports(period=period, limit=limit)
+
+
+@app.get("/reports/{report_id}", response_model=ComplianceReport)
+def read_report(report_id: str) -> ComplianceReport:
+    """The frozen report joined to its findings' current review statuses.
+
+    Not `report_json` as stored: that would show every finding as pending_review forever, however
+    much review had happened. `/reports/{id}/filed` is the verbatim original.
+    """
+    report = reports().get(report_id)
+    if report is None:
+        raise HTTPException(404, f"no report {report_id!r}")
+    return report
+
+
+@app.get("/reports/{report_id}/filed", response_model=ComplianceReport)
+def read_filed_report(report_id: str) -> ComplianceReport:
+    """What the engine concluded, with no human review applied. Immutable by construction."""
+    report = reports().stored(report_id)
+    if report is None:
+        raise HTTPException(404, f"no report {report_id!r}")
+    return report
+
+
+class ReviewRequest(BaseModel):
+    action: Literal["clear", "escalate", "approve"]
+    reviewer: str = Field(min_length=1)
+    note: str = ""
+
+
+@app.post("/findings/{finding_id}/review")
+def review_finding(finding_id: str, request: ReviewRequest) -> dict[str, Any]:
+    """Record one review decision (LLD §5.1 step 9).
+
+    Append-only: the review is added to the finding's history and its status moves. `report_json`
+    is not touched, which is what makes the filed report still be the filed report afterwards.
+    """
+    try:
+        status = reports().review(
+            finding_id, request.action, reviewer=request.reviewer, note=request.note
+        )
+    except KeyError as error:
+        raise HTTPException(404, f"no finding {finding_id!r}") from error
+    except InvalidTransition as error:
+        raise HTTPException(409, str(error)) from error
+
+    return {
+        "finding_id": finding_id,
+        "status": status,
+        "history": [
+            {
+                "action": entry.action,
+                "reviewer": entry.reviewer,
+                "timestamp": entry.timestamp.isoformat(timespec="seconds"),
+                "note": entry.note,
+            }
+            for entry in reports().reviews_for(finding_id)
+        ],
+    }
