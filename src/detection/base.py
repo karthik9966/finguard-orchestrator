@@ -10,7 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from src.config import PatternType, get_config
-from src.detection.graph_builder import BatchGraph, build_graph
+from src.detection.graph_engine import BatchGraph, build_graph
 from src.models import Candidate, TransactionRecord
 
 DETECTORS: dict[str, "BaseDetector"] = {}
@@ -58,8 +58,14 @@ def register(detector: BaseDetector) -> BaseDetector:
     return detector
 
 
-def detect_all(records: list[TransactionRecord], *, reconcile: bool = True) -> list[Candidate]:
-    """Run every registered detector over one batch, then reconcile.
+def detect_all(
+    batch: BatchGraph | list[TransactionRecord], *, reconcile: bool = True
+) -> list[Candidate]:
+    """Run every registered detector over one batch graph, then reconcile.
+
+    Takes the graph `GraphBuildNode` already built (LLD v2 §5.1 step 3b). A plain record list is
+    still accepted, and built here, for callers outside the agent graph -- the eval runners and
+    the detector tests -- which have no graph node to build it for them.
 
     Reconciliation is on by default because it is not hygiene: `fan_out` fires on the first leg
     of every `scatter_gather`, so without it the same transactions are reported twice under
@@ -72,10 +78,11 @@ def detect_all(records: list[TransactionRecord], *, reconcile: bool = True) -> l
     from src.detection import scatter_gather as _scatter_gather  # noqa: F401
     from src.detection.reconciler import CandidateReconciler
 
-    if not records:
+    if not isinstance(batch, BatchGraph):
+        batch = build_graph(batch)
+    if not batch.records:
         return []
 
-    batch = build_graph(records)
     found: list[Candidate] = []
     for pattern in get_config().detection.precedence_order:
         detector = DETECTORS.get(pattern)

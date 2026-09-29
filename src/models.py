@@ -408,6 +408,9 @@ class AgentState(TypedDict, total=False):
     run_id: str
     period: str
     records: list[TransactionRecord]
+    # The GraphEngine's view of `records`, built once by GraphBuildNode. Typed loosely because
+    # models.py sits below detection in the import graph; it is a `BatchGraph`. Never traced.
+    batch_graph: Any
     candidates: list[Candidate]
     current_index: int
     retrieval: RetrievalResult | None
@@ -438,6 +441,7 @@ def initial_state(
         run_id=run_id,
         period=period,
         records=records,
+        batch_graph=None,
         candidates=[],
         current_index=0,
         retrieval=None,

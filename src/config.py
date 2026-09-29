@@ -271,6 +271,16 @@ class DetectionConfig(BaseModel):
         return order
 
 
+class GraphConfig(BaseModel):
+    """The GraphEngine's cost guardrails (HLD v2 §4). Bounds, not semantics: nothing here says
+    what a pattern is, only how much of the graph a query may touch before it stops."""
+
+    max_traversal_depth: int = Field(ge=1)
+    max_frontier: int = Field(gt=0)
+    max_block_senders: int = Field(gt=1)
+    max_block_side: int = Field(gt=1)
+
+
 class ReasoningConfig(BaseModel):
     confidence_threshold: float = Field(ge=0.0, le=1.0)
     max_loops: int = Field(ge=0)
@@ -332,6 +342,7 @@ class Config(BaseModel):
     schema_version: int = Field(validation_alias=AliasChoices("schema", "schema_version"))
     retrieval: RetrievalConfig
     detection: DetectionConfig
+    graph: GraphConfig
     reasoning: ReasoningConfig
     persistence: PersistenceConfig
     chunking: ChunkingConfig

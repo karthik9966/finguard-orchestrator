@@ -17,7 +17,7 @@ Three things differ from those primitives, and each is a recorded defect of thei
 """
 
 from src.detection.base import BaseDetector, DETECTORS, detect_all, register
-from src.detection.graph_builder import BatchGraph, build_graph
+from src.detection.graph_engine import BatchGraph, build_graph
 from src.detection.reconciler import CandidateReconciler
 
 __all__ = [

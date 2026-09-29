@@ -14,7 +14,7 @@ from src.config import get_config
 from src.detection import confidence
 from src.detection.base import BaseDetector, register
 from src.detection.fan_in import windowed_groups
-from src.detection.graph_builder import BatchGraph
+from src.detection.graph_engine import BatchGraph
 from src.models import Candidate
 
 

@@ -118,6 +118,16 @@ def state_with(*candidates, **overrides):
 # --- detection --------------------------------------------------------------------------------
 
 
+def test_the_graph_is_built_once_and_detection_reads_it():
+    """LLD v2 §5.1 step 3b: detection runs over the graph GraphBuildNode wrote, not over a graph
+    it builds for itself."""
+    seen = []
+    state = state_with(records=[])
+    state.update(nodes.GraphBuildNode()(state))
+    nodes.DetectionNode(detector=lambda batch: seen.append(batch) or [])(state)
+    assert seen == [state["batch_graph"]]
+
+
 def test_no_candidates_sets_the_clean_flag_and_routes_past_every_model():
     update = nodes.DetectionNode(detector=lambda records: [])(state_with(records=[]))
     assert update["clean_flag"] is True

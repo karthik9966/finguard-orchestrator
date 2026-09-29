@@ -111,6 +111,27 @@ detection:
   precedence_order: [structuring, cycle, scatter_gather, fan_in, fan_out]
 
 # ---------------------------------------------------------------------------------------------
+# Graph engine -- LLD v2 §2.5
+#
+# Cost guardrails, the graph's equivalent of `max_loops`: they bound how much of a dense graph one
+# query may touch, so a pathological batch degrades to a truncated search (logged) rather than to a
+# run that never finishes. None of them says what a pattern *is* -- that lives under detection.
+# ---------------------------------------------------------------------------------------------
+graph:
+  # Hops a layered traversal may walk from its root. Every SAML-D layered and stacked cluster is
+  # exactly 2 deep (measured over all 1,691 of their edges), so 3 leaves one hop of headroom.
+  max_traversal_depth: 3
+  # Accounts one traversal level may hold before the walk stops widening. A funnel's layer is 4-10
+  # accounts in SAML-D; a level of hundreds is a payment processor, not a funnel.
+  max_frontier: 200
+  # Senders considered for bipartite blocks, largest out-degree first. The pair search is
+  # quadratic in this, so it is the bound that matters on a dense graph.
+  max_block_senders: 500
+  # A receiver with more senders than this is excluded as a block member: it is a hub, and a hub
+  # joins every sender to every other and makes each pair look like a block.
+  max_block_side: 50
+
+# ---------------------------------------------------------------------------------------------
 # Reasoning core -- LLD §5
 # ---------------------------------------------------------------------------------------------
 reasoning:

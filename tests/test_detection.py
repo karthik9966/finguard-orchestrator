@@ -16,7 +16,7 @@ import pytest
 from src.config import PATTERN_TYPES, get_config
 from src.detection import detect_all
 from src.detection.confidence import coefficient_of_variation, score
-from src.detection.graph_builder import build_graph
+from src.detection.graph_engine import build_graph
 from src.detection.reconciler import CandidateReconciler
 from src.ingestion.batch import TransactionBatchIngestor
 from src.models import Candidate, TransactionRecord
