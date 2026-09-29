@@ -624,37 +624,62 @@ or the question says so and waits for the button.
 ## Service & container (§10)
 
 ```bash
-uv run uvicorn src.api.main:app --reload
+API_AUTH_TOKEN=$(openssl rand -hex 32) uv run uvicorn src.api.main:app --reload
 ```
 
 | endpoint | |
 |---|---|
-| `POST /audit` | multipart batch upload → **202** with an `audit_id`, audited in the background |
-| `GET /audit/{id}` | status, and the `ComplianceReport` once finished |
-| `GET /audits` | everything this process has run, report bodies omitted |
-| `GET /health` | **503** unless the collection is actually queryable |
+| `POST /audits` | multipart batch upload → **202** with a `job_id`, audited on the worker |
+| `POST /audits?wait=true` | Journey 2's one round trip: the report in the response, or the id if it runs long |
+| `GET /audits/{job_id}` | status, and the `ComplianceReport` once there is one |
+| `GET /audits` | every job on record, newest first, report bodies omitted |
+| `GET /reports?period=YYYY-MM` | Journey 3: stored reports, by month |
+| `GET /reports/{id}` | the frozen report joined to its findings' **current** review statuses |
+| `GET /reports/{id}/filed` | the same report exactly as filed, with no review applied |
+| `POST /findings/{id}/review` | `clear` / `escalate` / `approve` → append-only review history |
+| `GET /health` | **503** unless the collection is genuinely queryable |
 
-An audit takes 30-60s and costs $0.06–$0.18, which is why it is not synchronous: a held
-connection for a minute is a timeout waiting for a proxy to find it. The batch is still parsed
-*during* the request, so a bad upload is a 400 in a second rather than a background task that
-fails a minute later for a reason the caller must poll to discover.
+Every endpoint but `/health` needs `Authorization: Bearer $API_AUTH_TOKEN`. **A service with no
+token configured refuses them all with 503** rather than serving them open — a forgotten token must
+not be the same thing as a public AML API. `/health` is deliberately exempt: a load balancer cannot
+carry a secret, and it returns counts rather than any report content.
 
-Verified end to end against the May batch:
+An audit is not synchronous because a held connection for the length of a run is a timeout waiting
+for a proxy to find it. The batch is still parsed *during* the request, so a bad upload is a 400 in
+a second rather than a queued job that fails a minute later for a reason the caller must poll to
+discover.
+
+**Runs are serialised through one worker.** Not for correctness — the graph holds no shared state —
+but because two concurrent audits contend for one vector store and one rate limit, and the failure
+mode is both getting slower and one hitting a 429. The queue depth is on `/health`.
+
+**The same batch posted twice does not run twice.** Dedup is on the sha256 of the uploaded bytes,
+because the retry worth protecting against is a client re-posting after a slow response, and the
+audit is the expensive thing here. A *failed* batch can be retried — the failure may have been the
+vector store being briefly down — and `?force=true` re-audits the same bytes deliberately, which is
+a real thing to want once the corpus has been rebuilt.
+
+Verified end to end against a real uvicorn and the clean May control:
 
 ```
-POST /audit    → 202 {"audit_id":"aud-6598a61d0f88","wires":220,"poll":"/audit/aud-6598a61d0f88"}
-GET  /audit/…  → running · running · running · complete   (~40s)
-               → risk Medium · confidence 0.50 · 5 calls · $0.0956
+GET  /health                    → 200  731 vectors                (no token needed)
+GET  /reports                   → 401  WWW-Authenticate: Bearer
+POST /audits                    → 202  run-fd6706b71605 · 500 transactions
+GET  /audits/run-fd6706b71605   → running · complete  ·  rating none, clean, $0.0000
+POST /audits (same bytes)       → 202  run-fd6706b71605 · deduplicated=true · 1 job on record
+
+-- uvicorn stopped and restarted on the same database --
+
+GET  /audits/run-fd6706b71605   → complete, report rep-run-fd6706b71605
+GET  /reports?period=2023-05    → 1 report
 ```
 
-The `audit_id` is the one `run_config()` already mints for tracing, reused as the resource id —
-so a LangSmith trace and an API result are the same run rather than two id schemes to join.
+The `job_id` **is** the `run_id`, and the report is `rep-{run_id}` — so a LangSmith trace, a job row
+and a stored report are one run rather than three id schemes to join.
 
-**Two honest caveats.** §10 specifies `graph.ainvoke`, and the nodes are *synchronous*, so it
-hands them to a threadpool rather than yielding on I/O. Correct, does not block the event loop,
-and not the same thing as async nodes. And the audit registry is an in-process dict: right for
-one instance, wrong for two, since a second worker would not see the first one's audits. Redis or
-Postgres is the fix if this is ever scaled out.
+Job state and reports live in SQLite at `RESULTS_DB_URL`, not in a process dict. That is what the
+last two lines above are testing: the dict this replaced could not answer `GET /audits/{id}` after a
+restart, which is the one thing LLD §5.1 step 9 asks of it.
 
 ### Docker
 
@@ -702,7 +727,7 @@ Verified running, with the corpus mounted:
 
 ```
 GET  /health   → {"status":"ok","vectors":12273,"backend":"minilm"}
-POST /audit    → 202, 220 wires
+POST /audits   → 202 + job_id
 GET  /audit/…  → complete after ~40s
                → risk Medium · confidence 0.50 · 5 calls · $0.0935
 ```

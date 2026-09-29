@@ -275,6 +275,17 @@ def test_an_unfaithful_draft_can_never_be_accepted_however_it_loops():
 # --- the critic's exits -----------------------------------------------------------------------
 
 
+def test_a_findings_id_is_scoped_to_its_run():
+    """A candidate id is stable across runs by design, so two audits of the same month would mint
+    the same finding id -- which collides in the store, where it is a primary key. The run is what
+    makes a finding one run's judgement rather than a property of the candidate."""
+    target = candidate("a")
+    first = nodes.finding_id(state_with(target, run_id="run-first"), target)
+    second = nodes.finding_id(state_with(target, run_id="run-second"), target)
+    assert first != second
+    assert target.candidate_id in first and "run-first" in first
+
+
 def test_a_well_grounded_draft_is_accepted_with_its_citations_resolved():
     target = candidate("a")
     model = StubModel(Critique(score=0.9, reason="every claim rests on a provided excerpt"))
@@ -352,7 +363,7 @@ def accepted(target, *, risk="medium", confidence=0.9, status="pending_review"):
     from src.models import Citation, Finding
 
     return Finding(
-        finding_id=f"f-{target.candidate_id}",
+        finding_id=f"f-run-test:{target.candidate_id}",
         candidate=target,
         risk_level=risk,
         narrative="A grounded narrative.",

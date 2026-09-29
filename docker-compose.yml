@@ -11,6 +11,19 @@ services:
     ports: ["8000:8000"]
     environment:
       LLM_API_KEY: ${LLM_API_KEY:?set LLM_API_KEY in your environment or .env}
+      # Required, not optional: without it the service refuses every endpoint but /health with a
+      # 503. That is the intended default -- this container audits financial records, and a
+      # forgotten token must not be the same thing as an open API. `openssl rand -hex 32`.
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:?set API_AUTH_TOKEN in your environment or .env}
+      # On the named volume below, so reports outlive `docker compose up --force-recreate`. The
+      # default (./results.db, inside the image) would be a fresh empty database every time, which
+      # defeats the point of persisting them.
+      RESULTS_DB_URL: sqlite:////data/results.db
     volumes:
       # Not :ro -- ChromaDB is SQLite underneath and opens a journal even to read.
       - ./chroma_db:/app/chroma_db
+      - results:/data
+
+volumes:
+  # Phase 7 adds the Langfuse stack and the Streamlit service alongside this.
+  results:

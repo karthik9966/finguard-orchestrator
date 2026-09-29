@@ -125,6 +125,21 @@ def current(state: AgentState) -> Candidate:
     return (state.get("candidates") or [])[state.get("current_index", 0)]
 
 
+def finding_id(state: AgentState, candidate: Candidate) -> str:
+    """Unique per *run*, not per candidate.
+
+    `candidate_id` is deliberately stable across runs -- it is a hash of the transaction references,
+    so re-auditing a batch produces the same candidate ids and two reports can be diffed. A finding
+    is not: it is one run's judgement about that candidate, reached with whatever retrieval and
+    review that run had, and re-auditing the same batch after the corpus changed must produce a
+    second finding that is separately reviewable rather than colliding with the first.
+
+    Found in Phase 6b, where `findings.finding_id` is a primary key and the collision showed up as
+    an integrity error on the second audit of the same month.
+    """
+    return f"f-{state['run_id']}:{candidate.candidate_id}"
+
+
 # --- 1. detection -------------------------------------------------------------------------
 
 
@@ -392,7 +407,7 @@ class CriticNode:
 
     def _accept(self, state, candidate, draft, score, notes) -> dict[str, Any]:
         finding = Finding(
-            finding_id=f"f-{candidate.candidate_id}",
+            finding_id=finding_id(state, candidate),
             candidate=candidate,
             risk_level=draft.risk_level,
             narrative=draft.narrative,
@@ -410,7 +425,7 @@ class CriticNode:
         if not notes:
             notes = ["the candidate could not be grounded in the retrieved context"]
         finding = Finding(
-            finding_id=f"f-{candidate.candidate_id}",
+            finding_id=finding_id(state, candidate),
             candidate=candidate,
             # A finding nobody could ground is not thereby low risk. `medium` says "unresolved",
             # which is the honest reading, and the High bar in report generation is unreachable

@@ -23,7 +23,13 @@ trail that silently rewrites history, so it is settled here.
 The reviews table is append-only. A status is a *derived* value -- the action of the latest review --
 and the history of how a finding got there is the part an auditor cares about.
 
-SQLAlchemy Core rather than the ORM: there are three tables, no relationships worth mapping, and the
+There is a fourth table the LLD does not list: **`jobs`**. §3.2 specifies the *results* tables and
+§5.1 step 1 says only "enqueue background graph run" -- but step 9 then has the client come back for
+`GET /audits/{job_id}`, and a queue that lives in a process dict cannot answer that after a restart.
+It is also where batch-hash dedup has to look, because the retry worth protecting against is a
+client re-posting while the first run is *still going*. Recorded as a deliberate deviation.
+
+SQLAlchemy Core rather than the ORM: there are four tables, no relationships worth mapping, and the
 URL is the point -- `RESULTS_DB_URL` is `sqlite:///./results.db` in v1 and a Postgres URL in
 production (LLD §8), which is a URL change and nothing else.
 """
@@ -178,6 +184,45 @@ REVIEWS = Table(
     Column("note", Text, nullable=False, default=""),
     Index("ix_reviews_finding_id", "finding_id"),
 )
+
+
+# Not in LLD §3.2 -- see the module docstring. A job is the *request*; a report is the result, and
+# the two have different lifetimes: a job can be running or failed with no report at all.
+JOBS = Table(
+    "jobs", METADATA,
+    Column("job_id", String(128), primary_key=True),
+    Column("batch_name", String(512), nullable=False),
+    # sha256 of the uploaded bytes. Indexed because every POST asks "have we already run this?"
+    Column("batch_sha256", String(64), nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("submitted_at", String(64), nullable=False),
+    Column("finished_at", String(64), nullable=True),
+    Column("report_id", String(128), nullable=True),
+    Column("error", Text, nullable=True),
+    Index("ix_jobs_batch_sha256", "batch_sha256"),
+    Index("ix_jobs_status", "status"),
+)
+
+JobStatus = Literal["running", "complete", "failed"]
+
+# A retry re-runs a batch that failed -- the failure may well have been the vector store being
+# briefly down -- but never one that is running or already done. That asymmetry is the whole point
+# of the dedup: it exists to stop a client's impatient retry from paying for a second audit.
+DEDUPLICATED: set[str] = {"running", "complete"}
+
+
+@dataclass
+class Job:
+    """One submitted batch and what became of it."""
+
+    job_id: str
+    batch_name: str
+    batch_sha256: str
+    status: JobStatus
+    submitted_at: datetime
+    finished_at: datetime | None = None
+    report_id: str | None = None
+    error: str | None = None
 
 
 @dataclass
@@ -397,6 +442,88 @@ class SqlResultsStore:
             ).all()
         return {finding_id: status for finding_id, status in rows}
 
+    # --- jobs -----------------------------------------------------------------------------
+
+    def create_job(self, job_id: str, *, batch_name: str, batch_sha256: str) -> Job:
+        job = Job(
+            job_id=job_id,
+            batch_name=batch_name,
+            batch_sha256=batch_sha256,
+            status="running",
+            submitted_at=datetime.now(timezone.utc),
+        )
+        self._write("create_job", lambda: self._insert_job(job))
+        return job
+
+    def _insert_job(self, job: Job) -> None:
+        with self._engine.begin() as connection:
+            connection.execute(insert(JOBS).values(
+                job_id=job.job_id,
+                batch_name=job.batch_name,
+                batch_sha256=job.batch_sha256,
+                status=job.status,
+                submitted_at=job.submitted_at.isoformat(),
+            ))
+
+    def finish_job(self, job_id: str, *, report_id: str) -> None:
+        self._set_job(job_id, status="complete", report_id=report_id)
+
+    def fail_job(self, job_id: str, *, error: str) -> None:
+        self._set_job(job_id, status="failed", error=error)
+
+    def _set_job(self, job_id: str, **values: Any) -> None:
+        values["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+        def apply() -> None:
+            with self._engine.begin() as connection:
+                connection.execute(
+                    JOBS.update().where(JOBS.c.job_id == job_id).values(**values)
+                )
+
+        self._write("update_job", apply)
+
+    def get_job(self, job_id: str) -> Job | None:
+        with self._engine.connect() as connection:
+            row = connection.execute(select(JOBS).where(JOBS.c.job_id == job_id)).mappings().first()
+        return self._job(row) if row else None
+
+    def job_for_batch(self, batch_sha256: str) -> Job | None:
+        """The most recent job for these exact bytes that a second POST should reuse.
+
+        Only `running` or `complete`: a failed batch is worth re-running, and one that is mid-flight
+        or finished is exactly what the dedup exists to protect.
+        """
+        with self._engine.connect() as connection:
+            row = connection.execute(
+                select(JOBS)
+                .where(JOBS.c.batch_sha256 == batch_sha256)
+                .where(JOBS.c.status.in_(sorted(DEDUPLICATED)))
+                .order_by(JOBS.c.submitted_at.desc())
+            ).mappings().first()
+        return self._job(row) if row else None
+
+    def list_jobs(self, *, limit: int = 50) -> list[Job]:
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                select(JOBS).order_by(JOBS.c.submitted_at.desc()).limit(limit)
+            ).mappings().all()
+        return [self._job(row) for row in rows]
+
+    @staticmethod
+    def _job(row) -> Job:
+        return Job(
+            job_id=row["job_id"],
+            batch_name=row["batch_name"],
+            batch_sha256=row["batch_sha256"],
+            status=row["status"],
+            submitted_at=datetime.fromisoformat(row["submitted_at"]),
+            finished_at=(
+                datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None
+            ),
+            report_id=row["report_id"],
+            error=row["error"],
+        )
+
     # --- reading --------------------------------------------------------------------------
 
     def stored(self, report_id: str) -> ComplianceReport | None:
@@ -481,7 +608,7 @@ class SqlResultsStore:
                 table.name: connection.execute(
                     select(func.count()).select_from(table)
                 ).scalar_one()
-                for table in (REPORTS, FINDINGS, REVIEWS)
+                for table in (REPORTS, FINDINGS, REVIEWS, JOBS)
             }
 
 

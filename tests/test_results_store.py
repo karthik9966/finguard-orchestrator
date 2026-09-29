@@ -51,9 +51,12 @@ def candidate(suffix: str = "a", pattern: str = "structuring") -> Candidate:
     )
 
 
-def finding(target: Candidate, *, status="pending_review", risk="medium", confidence=0.9) -> Finding:
+def finding(target: Candidate, *, status="pending_review", risk="medium", confidence=0.9,
+            run="run-abc") -> Finding:
     return Finding(
-        finding_id=f"f-{target.candidate_id}",
+        # Run-scoped, as `nodes.finding_id` mints it: a candidate id is stable across runs by
+        # design, so a report-scoped judgement about it cannot be keyed on the candidate alone.
+        finding_id=f"f-{run}:{target.candidate_id}",
         candidate=target,
         risk_level=risk,
         narrative="Two transfers just below the reporting threshold within eleven days.",
@@ -119,7 +122,7 @@ def test_the_lld_indexes_exist():
 def test_a_report_and_its_findings_are_saved_together(store):
     first, second = candidate("a"), candidate("b", "fan_in")
     store.save(report(finding(first), finding(second)))
-    assert store.counts() == {"reports": 1, "findings": 2, "reviews": 0}
+    assert store.counts() == {"reports": 1, "findings": 2, "reviews": 0, "jobs": 0}
 
 
 def test_a_clean_report_saves_with_no_findings(store):
@@ -153,7 +156,7 @@ def test_saving_the_same_report_twice_is_idempotent(store):
     """The retry path must not leave two half-written copies."""
     store.save(report(finding(candidate("a"))))
     store.save(report(finding(candidate("a"))))
-    assert store.counts() == {"reports": 1, "findings": 1, "reviews": 0}
+    assert store.counts() == {"reports": 1, "findings": 1, "reviews": 0, "jobs": 0}
 
 
 def test_findings_keep_the_order_they_were_filed_in(store):
@@ -163,6 +166,28 @@ def test_findings_keep_the_order_they_were_filed_in(store):
     assert [f.candidate.pattern_type for f in restored.findings] == [
         "structuring", "fan_in", "cycle"
     ]
+
+
+def test_two_audits_of_the_same_batch_are_separately_reviewable(store):
+    """`candidate_id` is stable across runs on purpose, so a finding keyed on it alone collides on
+    the second audit of a month -- which is what `?force=true` does. Found in Phase 6b as an
+    integrity error; the finding id is run-scoped so both judgements stand and each can be reviewed
+    on its own."""
+    target = candidate("a")
+    store.save(report(finding(target, run="run-first"), run="run-first"))
+    store.save(report(finding(target, run="run-second"), run="run-second"))
+
+    assert store.counts()["findings"] == 2
+    first = store.get("rep-run-first").findings[0]
+    second = store.get("rep-run-second").findings[0]
+    assert first.finding_id != second.finding_id
+    assert first.candidate.candidate_id == second.candidate.candidate_id
+
+    store.review(second.finding_id, "escalate", reviewer="analyst@bank")
+    assert store.get("rep-run-first").findings[0].status == "pending_review", (
+        "reviewing one audit's finding must not move the other's"
+    )
+    assert store.get("rep-run-second").findings[0].status == "escalated"
 
 
 # --- the write failure ------------------------------------------------------------------------
