@@ -1,0 +1,17 @@
+{
+  "id": "CB-001",
+  "batch": "data/processed/ledger/2023-05_private_banking_log.txt",
+  "transactions": 500,
+  "expect": {
+    "candidates": 0,
+    "llm_calls": 0,
+    "cost_usd": 0.0,
+    "report": {
+      "clean": true,
+      "risk_rating": "none",
+      "findings": 0
+    }
+  },
+  "why": "Verifies the detectors produce zero candidates, the graph makes zero LLM calls, and the system emits an empty-but-valid report rather than inventing a finding. The one corpus shared with the dev set: it is the batch every '$0.0000 on a clean month' claim was already measured on.",
+  "label_source": "SAML-D Is_laundering == 0 for every row (derived, not authored)"
+}

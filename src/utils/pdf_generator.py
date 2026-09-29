@@ -47,6 +47,23 @@ from src.ingestion.download import DATA_DIR, SAML_D_CSV
 LEDGER_DIR = DATA_DIR / "processed" / "ledger"
 LABELS_PATH = DATA_DIR / "processed" / "ledger_labels.csv"
 
+# Phase 8's golden corpus lives apart from the dev one, and that separation is not filing tidiness.
+# The detectors' window, band and minimum-counterparty numbers were all chosen by measuring recall
+# against the dev batches; evaluating on the same data would be marking my own homework, and every
+# number in config.yaml cites "measured across the four dev batches" as its evidence. A golden set
+# also has to be *stable* -- a corpus that moves when someone regenerates the dev ledgers is not a
+# baseline. So the eval profile writes here instead, and `ledger_labels.csv` keeps describing
+# exactly the corpus those measurements were taken on.
+EVAL_LEDGER_DIR = DATA_DIR / "processed" / "eval_ledger"
+EVAL_LABELS_PATH = DATA_DIR / "processed" / "eval_labels.csv"
+
+
+def destination(profile: str) -> tuple[Path, Path]:
+    """Where a profile's logs and labels go. The eval corpus is deliberately not the dev corpus."""
+    if profile == "eval":
+        return EVAL_LEDGER_DIR, EVAL_LABELS_PATH
+    return LEDGER_DIR, LABELS_PATH
+
 # SAML-D's real base rate is 0.1%; a log at that rate is almost always empty of findings.
 # We over-sample so each log contains something to audit, but stop well short of a batch
 # that no auditor would believe.
@@ -370,6 +387,12 @@ class SliceConfig:
     # Which named emission this is. Carried so a caller can ask for "dev" rather than restating
     # four numbers, and so the profile that produced a corpus is recoverable from the call.
     profile: str = "dev"
+    # How many *distinct* clusters to plant per typology per month. 1 is the Phase 2 behaviour and
+    # stays the default, so the dev and large corpora regenerate identically. Phase 8 needs 15
+    # instances per pattern for the golden set, and with six in-scope typologies and six unused
+    # months one-per-typology tops out at 36 -- hence the knob. Declared after `profile` so the
+    # existing positional call sites keep meaning what they say.
+    clusters_per_typology: int = 1
 
 
 # The emissions Phase 2 calls for. `dev` is three working batches plus a clean control; `large`
@@ -386,6 +409,18 @@ PROFILES = {
     # 2023-04: outside the dev window, and inside SAML-D's range. The corpus ends at 2023-08,
     # so a month after that silently produces nothing.
     "large": [SliceConfig("2023-04", 1, 10_000, 12, 3, 20260814, "large")],
+    # Phase 8's golden corpus. Six months SAML-D has and nothing else uses -- dev holds 2023-06..08,
+    # the control is 2023-05 and the 10k batch is 2023-04 -- with three clusters per typology per
+    # month. That yields ~90 planted instances, comfortably above the 15 per pattern the golden set
+    # selects, and leaves the existing corpora untouched so every number measured against them
+    # still stands.
+    # 11 months at 1,200 messages, every in-scope typology, three clusters of each per month. The
+    # sizing is a consequence of MAX_FLAGGED_SHARE: a cluster averages ~20 transactions, so a
+    # 500-message batch holds three of them before the flagged share stops being credible, and the
+    # golden set needs 75. It uses the same months as the dev corpus on purpose -- a different slice
+    # of the same source, in its own directory, rather than a different period whose typology mix
+    # would be an accident of the calendar.
+    "eval": [SliceConfig("2022-10", 11, 1_200, 6, 3, 20260814, "eval", clusters_per_typology=3)],
 }
 
 
@@ -478,41 +513,68 @@ def select_cases(
 
     selected_indices: list[pd.Index] = []
     anchors: set[int] = set()
-    for typology in (present + others)[: cases_wanted or config.cases_per_month]:
+    wanted = cases_wanted or config.cases_per_month
+    for typology in (present + others)[:wanted]:
         cases = suspicious[suspicious.Laundering_type == typology]
         shape = shape_of(typology)
 
         if shape == SINGLE_WIRE:
-            # Nothing to cluster: an over-invoiced payment is suspicious because £2.7M is
+            # Nothing to cluster: an over-invoiced payment is suspicious because $2.7M is
             # implausible for the stated trade, not because it repeats.
-            selected_indices.append(cases.nlargest(1, "Amount").index)
+            selected_indices.append(cases.nlargest(config.clusters_per_typology, "Amount").index)
             continue
 
         if shape == CHAINED:
-            chain = select_chain(cases)
-            if len(chain) >= config.min_cluster:
+            # Several rings per month where the month's edges support it, taken one at a time from
+            # what the previous walk did not use. Disjoint by construction, so a second chain is a
+            # genuine second ring rather than the first one with an edge missing -- and it has to
+            # clear `min_cluster` on its own, so a two-hop remnant is not planted as a pattern.
+            remaining = cases
+            walked = 0
+            while walked < config.clusters_per_typology:
+                chain = select_chain(remaining)
+                if len(chain) < config.min_cluster:
+                    break
                 selected_indices.append(chain)
-                anchors.update(int(a) for a in cases.loc[chain].Sender_account)
+                anchors.update(int(a) for a in remaining.loc[chain].Sender_account)
+                remaining = remaining.drop(chain)
+                walked += 1
+            if walked:
                 continue
             # Too few edges this month to form a ring -- fall through and anchor instead.
 
         side = anchor_side(cases)
         counts = cases[side].value_counts()
-        counts = counts[counts >= config.min_cluster]
-        if counts.empty:
-            counts = cases[side].value_counts().head(1)
-        anchor = int(counts.index[0])
-        anchors.add(anchor)
-        selected_indices.append(cases[cases[side] == anchor].index)
+        qualifying = counts[counts >= config.min_cluster]
+        if qualifying.empty:
+            qualifying = counts.head(1)
+        # Several anchors rather than only the busiest, so one month can contribute more than one
+        # instance of a typology. Taken in descending size and then by account, which is stable
+        # across runs -- a golden dataset whose membership moves between builds is not golden.
+        chosen = sorted(qualifying.head(config.clusters_per_typology).index)
+        for anchor_account in chosen:
+            anchor = int(anchor_account)
+            anchors.add(anchor)
+            selected_indices.append(cases[cases[side] == anchor].index)
 
-    flagged = month.loc[sorted({i for idx in selected_indices for i in idx})]
+    # Each entry in `selected_indices` *is* one planted instance, so the id is recorded here rather
+    # than reconstructed later. Pattern-level recall -- "did the system report this fan-in?" -- needs
+    # to know which transactions form one instance, and a consumer guessing at it from anchors and
+    # typologies would be re-deriving a decision this function already made. `Cycle` is a walked
+    # chain with no anchor at all, so there is no reliable way to guess it from outside.
+    flagged = month.loc[sorted({i for idx in selected_indices for i in idx})].copy()
+    flagged["Cluster"] = pd.NA
+    for ordinal, index in enumerate(selected_indices, start=1):
+        typology = str(month.loc[index[0], "Laundering_type"])
+        flagged.loc[flagged.index.intersection(index), "Cluster"] = f"{typology}-{ordinal:02d}"
     # The collector account's legitimate traffic is what makes the run look like a pattern
     # rather than a list of isolated transfers -- but it has to be *some* of that traffic.
     # Taking all of it lets one anchor swamp the log: an anchor whose ordinary month happens
     # to include a 180-wire Normal_Fan_In consumed the entire context budget and produced a
     # "monthly log" that was 85% one account receiving money on a single day. No detector can
     # work on that, and no auditor would recognise it as a month of private banking.
-    clean = month[month.Is_laundering == 0]
+    clean = month[month.Is_laundering == 0].copy()
+    clean["Cluster"] = pd.NA
     kept: set[int] = set()
     for anchor in sorted(anchors):
         touching = clean[(clean.Sender_account == anchor) | (clean.Receiver_account == anchor)]
@@ -655,25 +717,26 @@ def generate(config: SliceConfig, *, append: bool = False) -> pd.DataFrame:
     if not SAML_D_CSV.exists():
         raise SystemExit("SAML-D missing -- run: uv run python -m src.ingestion.download")
 
+    ledger_dir, labels_path = destination(config.profile)
     periods = [pd.Period(config.start, freq="M") + i for i in range(config.months)]
     print(f"Loading {periods[0]}..{periods[-1]} from {SAML_D_CSV.name}")
     window = load_window(SAML_D_CSV, periods)
     print(f"  {len(window):,} rows in window ({int(window.Is_laundering.sum()):,} flagged)")
 
-    LEDGER_DIR.mkdir(parents=True, exist_ok=True)
+    ledger_dir.mkdir(parents=True, exist_ok=True)
     # Logs from a previous run would outlive the labels CSV, leaving the sidecar describing a
     # corpus that no longer matches what is on disk. In append mode only the months being
     # rewritten are cleared, so a control batch can be added without rebuilding the corpus.
     stale = (
-        [p for period in periods for p in LEDGER_DIR.glob(f"{period}_private_banking_log.*")]
+        [p for period in periods for p in ledger_dir.glob(f"{period}_private_banking_log.*")]
         if append
-        else list(LEDGER_DIR.glob("*_private_banking_log.*"))
+        else list(ledger_dir.glob("*_private_banking_log.*"))
     )
     for path in stale:
         path.unlink()
 
     existing = (
-        pd.read_csv(LABELS_PATH) if append and LABELS_PATH.exists() else pd.DataFrame()
+        pd.read_csv(labels_path) if append and labels_path.exists() else pd.DataFrame()
     )
     # :20: references must stay unique across the whole corpus, not just within one run.
     counter = int(existing.Reference.str[-5:].astype(int).max()) if len(existing) else 0
@@ -690,8 +753,8 @@ def generate(config: SliceConfig, *, append: bool = False) -> pd.DataFrame:
 
         text = render_text(period, frame)
         stem = f"{period}_private_banking_log"
-        (LEDGER_DIR / f"{stem}.txt").write_text(text)
-        render_pdf(text, LEDGER_DIR / f"{stem}.pdf")
+        (ledger_dir / f"{stem}.txt").write_text(text)
+        render_pdf(text, ledger_dir / f"{stem}.pdf")
 
         flagged = int(frame.Is_laundering.sum())
         typologies = sorted(set(frame.loc[frame.Is_laundering == 1, "Laundering_type"]))
@@ -715,9 +778,9 @@ def generate(config: SliceConfig, *, append: bool = False) -> pd.DataFrame:
         ledger_labels = pd.concat(
             [existing[~existing.Log_file.isin(rewritten)], ledger_labels], ignore_index=True
         ).sort_values(["Log_file", "Date", "Time"], ignore_index=True)
-    ledger_labels.to_csv(LABELS_PATH, index=False)
-    print(f"\nLogs      -> {LEDGER_DIR.relative_to(DATA_DIR.parent)}")
-    print(f"Labels    -> {LABELS_PATH.relative_to(DATA_DIR.parent)} ({len(ledger_labels):,} rows)")
+    ledger_labels.to_csv(labels_path, index=False)
+    print(f"\nLogs      -> {ledger_dir.relative_to(DATA_DIR.parent)}")
+    print(f"Labels    -> {labels_path.relative_to(DATA_DIR.parent)} ({len(ledger_labels):,} rows)")
     return ledger_labels
 
 

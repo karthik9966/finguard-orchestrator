@@ -1,0 +1,135 @@
+[
+  {
+    "id": "CQ-001",
+    "pattern_type": "structuring",
+    "why_hard": "The corpus holds 29 chunks matching threshold/structuring language. The right one turns on *what* was just below the threshold -- an amount -- not on the complexity of the arrangement or on where the customer kept the cash.",
+    "candidate": {
+      "pattern_type": "structuring",
+      "attributes": {"threshold": 10000, "band_low": 8000, "members": 4, "total": "36800.00", "window_days": 11}
+    },
+    "correct_indicator": {"source_id": "ffiec-appendix-f", "section_ref": "Other Unusual or Suspicious Customer Activity ¶ 9"},
+    "distractors": [
+      {"source_id": "ffiec-appendix-f", "section_ref": "Trade Finance ¶ 7", "why_wrong": "'structure appears unnecessarily complex' is about deal structure, not amounts below a reporting threshold"},
+      {"source_id": "ffiec-appendix-f", "section_ref": "Efforts to Avoid Reporting or Recordkeeping Requirement ¶ 7", "why_wrong": "same theme, but the fact it turns on is safe-deposit-box access, which this candidate has no evidence of"}
+    ]
+  },
+  {
+    "id": "CQ-002",
+    "pattern_type": "structuring",
+    "why_hard": "Near-identical to CQ-001 in vocabulary and deliberately a *different* correct answer: many parties depositing is smurfing, and the corpus distinguishes it from one party splitting amounts. A retriever that treats 'structuring' as one topic gets exactly one of these two right.",
+    "candidate": {
+      "pattern_type": "structuring",
+      "attributes": {"threshold": 10000, "distinct_senders": 9, "members": 9, "total": "81000.00", "window_days": 3}
+    },
+    "correct_indicator": {"source_id": "ffiec-appendix-f", "section_ref": "Other Unusual or Suspicious Customer Activity ¶ 8"},
+    "distractors": [
+      {"source_id": "ffiec-appendix-f", "section_ref": "Other Unusual or Suspicious Customer Activity ¶ 9", "why_wrong": "correct for CQ-001; here the salient fact is the number of depositors, not the amount"}
+    ]
+  },
+  {
+    "id": "CQ-003",
+    "pattern_type": "fan_in",
+    "why_hard": "'Concentration account' means two different things. In FFIEC it is a bank's internal general-ledger account; in a fan-in it is money concentrating in one customer account. The wrong one is lexically closer to the candidate's own description.",
+    "candidate": {
+      "pattern_type": "fan_in",
+      "attributes": {"distinct_senders": 12, "members": 12, "total": "175836.54", "window_days": 14}
+    },
+    "correct_indicator": {"source_id": "ffiec-appendix-f", "section_ref": "Other Transactions That Appear Unusual or Suspicious ¶ 2"},
+    "distractors": [
+      {"source_id": "ffiec-appendix-f", "section_ref": "Changes in Bank-to-Bank Transactions ¶ 2", "why_wrong": "'concentration account' here is the bank's own ledger account, not a customer account receiving from many senders"},
+      {"source_id": "ffiec-risk-concentration-accounts", "section_ref": "Risk Mitigation ¶ 1", "why_wrong": "a control the bank should have, not an indicator of this customer's activity"}
+    ]
+  },
+  {
+    "id": "CQ-004",
+    "pattern_type": "fan_in",
+    "why_hard": "Two funnel indicators are nearly the same sentence. They differ on whether the *collecting* accounts are business/charity accounts, which this candidate says nothing about -- so the more general one is correct and the more specific one is an unsupported claim.",
+    "candidate": {
+      "pattern_type": "fan_in",
+      "attributes": {"distinct_senders": 7, "members": 7, "total": "42300.00", "window_days": 9}
+    },
+    "correct_indicator": {"source_id": "ffiec-appendix-f", "section_ref": "Other Transactions That Appear Unusual or Suspicious ¶ 2"},
+    "distractors": [
+      {"source_id": "ffiec-appendix-f", "section_ref": "Activity Inconsistent With the Customer’s Business ¶ 9", "why_wrong": "requires the collecting accounts to be personal/business/charity accounts; nothing in the candidate establishes that"}
+    ]
+  },
+  {
+    "id": "CQ-005",
+    "pattern_type": "fan_out",
+    "why_hard": "The single clearly-correct indicator for one payer and many payees. Included as the control: if this one is missed, the retriever is not discriminating at all.",
+    "candidate": {
+      "pattern_type": "fan_out",
+      "attributes": {"distinct_recipients": 14, "members": 14, "total": "27750.34", "window_days": 12}
+    },
+    "correct_indicator": {"source_id": "ffiec-appendix-f", "section_ref": "Shell Company Activity ¶ 5"},
+    "distractors": []
+  },
+  {
+    "id": "CQ-006",
+    "pattern_type": "fan_out",
+    "why_hard": "'Unrelated third parties' appears in lending, trade-finance and insurance contexts, none of which is a wire fan-out. The generic phrase matches; the setting does not.",
+    "candidate": {
+      "pattern_type": "fan_out",
+      "attributes": {"distinct_recipients": 6, "members": 8, "total": "19400.00", "window_days": 5, "instrument": "WIRE"}
+    },
+    "correct_indicator": {"source_id": "ffiec-appendix-f", "section_ref": "Shell Company Activity ¶ 5"},
+    "distractors": [
+      {"source_id": "ffiec-appendix-f", "section_ref": "Trade Finance ¶ 8", "why_wrong": "payment of trade proceeds to a third party, not a wire fan-out"},
+      {"source_id": "ffiec-appendix-f", "section_ref": "Lending Activity ¶ 2", "why_wrong": "collateral owned by unrelated parties -- a lending fact"}
+    ]
+  },
+  {
+    "id": "CQ-007",
+    "pattern_type": "scatter_gather",
+    "why_hard": "The shape is dispersal then re-collection, and the closest indicator is about funds arriving and leaving again quickly. 'Layers of TPSPs' is the lexical near-miss and is ACH-specific.",
+    "candidate": {
+      "pattern_type": "scatter_gather",
+      "attributes": {"intermediaries": 5, "members": 11, "total": "88200.00", "window_days": 8}
+    },
+    "correct_indicator": {"source_id": "finra-rn-19-18", "section_ref": "part 24 of 28"},
+    "distractors": [
+      {"source_id": "ffiec-appendix-f", "section_ref": "Automated Clearing House Transactions ¶ 3", "why_wrong": "'multiple layers of TPSPs' is an ACH-specific indicator; these are wires"}
+    ]
+  },
+  {
+    "id": "CQ-008",
+    "pattern_type": "scatter_gather",
+    "why_hard": "Tests the 'no apparent purpose' limb rather than the geometry. The indicator that names a *lack of business purpose* is the right one; the ones that merely describe complexity are not.",
+    "candidate": {
+      "pattern_type": "scatter_gather",
+      "attributes": {"intermediaries": 4, "members": 9, "total": "51000.00", "window_days": 6, "retained_fraction": 0.94}
+    },
+    "correct_indicator": {"source_id": "ffiec-appendix-f", "section_ref": "Other Unusual or Suspicious Customer Activity ¶ 17"},
+    "distractors": [
+      {"source_id": "ffiec-appendix-f", "section_ref": "Trade Finance ¶ 7", "why_wrong": "complexity without the missing-purpose limb"}
+    ]
+  },
+  {
+    "id": "CQ-009",
+    "pattern_type": "cycle",
+    "why_hard": "**The corpus has no round-trip red flag.** Searching 479 illustrative chunks for circular / round-trip / returns-to-origin language returns nothing. So the honest expectation is that no indicator is correct and grounding proceeds on the obligations alone (LLD §6 EMPTY_INDICATOR_RETRIEVAL) -- not that the retriever should produce a best-effort match and the report should cite it as though a regulator had written it down.",
+    "candidate": {
+      "pattern_type": "cycle",
+      "attributes": {"hops": 5, "members": 9, "retained_fraction": 0.71, "window_days": 13}
+    },
+    "correct_indicator": null,
+    "expect_no_indicator": true,
+    "excluded_from_precision": "no correct answer exists in the corpus; scoring this would measure the corpus, not the retriever",
+    "distractors": [
+      {"source_id": "ffiec-appendix-f", "section_ref": "Automated Clearing House Transactions ¶ 3", "why_wrong": "layering, but ACH-specific and not circular"}
+    ]
+  },
+  {
+    "id": "CQ-010",
+    "pattern_type": "fan_in",
+    "why_hard": "A fan-in whose salient fact is speed rather than breadth: money arrives from several senders and leaves almost immediately. The breadth indicators match the shape; the right one matches the behaviour.",
+    "candidate": {
+      "pattern_type": "fan_in",
+      "attributes": {"distinct_senders": 5, "members": 5, "total": "23800.00", "window_days": 2, "outflow_within_days": 1}
+    },
+    "correct_indicator": {"source_id": "finra-rn-19-18", "section_ref": "part 24 of 28"},
+    "distractors": [
+      {"source_id": "ffiec-appendix-f", "section_ref": "Other Transactions That Appear Unusual or Suspicious ¶ 2", "why_wrong": "correct for a breadth fan-in (CQ-003/004); here the distinguishing fact is the immediate outflow"}
+    ]
+  }
+]
