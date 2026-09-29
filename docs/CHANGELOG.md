@@ -1,12 +1,178 @@
 # Changelog
 
-Implementation log for FinGuard Orchestrator, 2026-08-13 → 2026-09-08. 17 commits, four phases.
+Implementation log for FinGuard Orchestrator.
+
+- **v1 build** — 2026-08-13 → 2026-09-08, 17 commits, four phases. Below, from "Phase 4 — Cockpit".
+- **v2 migration** — 2026-09-27 → 2026-09-29, 16 commits, ten phases. Immediately below this line.
 
 This is a record of **what changed and why**, and the "why" is usually a measurement or a defect
 rather than a preference. Where a decision reversed an earlier one, both are kept — a changelog
-that only shows the winning branch hides the reason the winner won.
+that only shows the winning branch hides the reason the winner won. The v1 section is left intact
+for that reason: much of what v2 replaced, it replaced for a measured cause, and the measurement
+lives in the entry that introduced the thing.
 
 ---
+
+# v2 — the design migration
+
+Ten phases against a hand-written design set (`AML- PRD.docx`, `FinGuard_HLD.docx`,
+`FinGuard_LLD.docx`, `FinGuard_Eval_Design.docx`) that superseded the v1 blueprint. The governing
+invariant: **the suite is green and the system runs at the end of every phase.** Phases 2–4 were
+purely additive and every deletion was deferred to Phase 5, which is what made that invariant
+keepable while two sets of contracts coexisted.
+
+As-built documentation: [DESIGN.md](DESIGN.md) · [HLD.md](HLD.md) · [LLD.md](LLD.md) ·
+[CONSTANTS.md](CONSTANTS.md) · [TEST_DESIGN.md](TEST_DESIGN.md) · [TEST_RESULTS.md](TEST_RESULTS.md).
+
+## Phase 0 · `23fa5db` — config spine, contracts, redaction, PR gate
+
+`config.yaml` + `Settings`/`Config`: numbers never in code, secrets never in the file. Every Phase-0
+contract written before its consumer. `redaction.py` with one function guarding both exits.
+
+**The PR gate lands here rather than in Phase 8, where the plan put it.** The migration's promise is
+a green suite at the end of every phase, and a promise whose only enforcement arrives eight phases
+later is not enforced — it is remembered.
+
+## Phase 1 · `be22a5f` `dc1b4d4` `28ca4ce` — the citable US corpus
+
+731 chunks, 20 US sources, tier and authority classified separately because tier says what kind of
+document the text came from and authority says whether it **binds**.
+
+Four chunking defects, each found on real regulation: **31 CFR 1010.311 was silently absent** (a
+single unlettered paragraph, so the CTR obligation and the $10,000 threshold were not indexed at
+all); one bullet swallowed 50,000 characters while reporting 86% coverage; 14 Appendix F indicators
+were filed under a page footer; 13 more under wrapped prose reading as a heading.
+
+*Reversal:* the `--rerank` flag that `test_rerank.py`'s skip message told people to run **had never
+existed**. Built, and it reproduces 45.2% → 55.6% hit@1 exactly.
+
+ObliQA fenced into its own collection: ADGM law is out of scope as *citable* law, but its 2,786
+labelled questions are the only retrieval ground truth this project has.
+
+## Phase 2 · `b4d2b72` — US ledgers, `TransactionRecord`, batch ingestion
+
+Re-domiciled the synthetic ledgers as a US institution. **Amounts are relabelled, not converted** —
+converting at an FX rate would lift a cluster sitting just under 10,000 straight over the threshold
+and stop it being structuring at all.
+
+*Reversal:* `PRIORITY_TYPOLOGIES` named the wrong things. The inherited list seeded Deposit-Send,
+Gather-Scatter and Layered_Fan_In — all excluded by PRD §2 — while plain `Fan_In` and `Fan_Out`, two
+of the five detectors, were absent entirely. Regenerating with the old list produced ledgers in which
+three of five detectors had nothing to find.
+
+Suite 40s → 120s from six tests each parsing the 10k batch; a session-scoped cache took it to 62s.
+
+## Phase 3 · `d660dfe` — five windowed typologies, reconciled
+
+`structuring · fan_in · fan_out · cycle · scatter_gather`, replacing four geometric primitives.
+
+**`window_days` 7 → 14 on measurement**: 85% recall → 96% → **99%**, for one extra candidate. SAML-D
+plants its clusters across 9–10 days, so 7 could not hold one.
+
+**`detection_confidence` is anti-correlated with planted wires** (incidental 0.562, planted 0.395).
+Recorded because it settles a design question: nothing may gate on it.
+
+*Defect:* the cycle DFS rejected its own closing edge. The `visited` set, ported from `find_paths`,
+blocked returning to the origin — so a directed cycle could never close.
+
+## Phase 4 · `ffefe9c` — tier-aware retrieval
+
+Tier 1 by curated id, Tier 2 by search + rerank. Both failure modes non-fatal, because raising on a
+config gap would let it fail a whole run.
+
+## Phase 5 · `d808ef9` — per-candidate reasoning core, and the deletions
+
+The two halves meet. **The self-check loop becomes per candidate**: one thin finding no longer sends
+every candidate back through retrieval, and one fabricated citation no longer vetoes the run.
+
+The High-risk bar moved out of the critic into report generation, and report generation lost its
+model call entirely — the pre-migration version had a model write the filing and then repaired three
+of its fields, and its ratings were *anti-correlated with the truth* (clean May came back High
+recommending a SAR; July, with 23 laundering patterns, came back Low).
+
+Measured: clean control **$0.0000**, June dev batch $0.0908–$0.1242 → **$0.018–$0.025 per candidate**.
+
+Deleted: `utils/detectors.py` and its 26 tests, the old six-node graph and its 55 tests, the reverse
+`Wire` adapter, `fallback_report`, the batch-level RRF pool, and every module-level config shim —
+that last now *enforced*, because `NAME = get_config().x.y` freezes at import and makes the file look
+live while being dead.
+
+## Phase 6 · `4ef3e05` `06d5cc6` `ff8bef8` — store, API, cockpit
+
+**The decision this phase turns on:** `reports.report_json` is immutable and `findings.status` is not,
+so reads return a *join*. A regulator asking what the system concluded in June must get an answer
+later review cannot have edited; an analyst must get the current state. Reading `report_json` alone
+would show every finding as `pending_review` for ever.
+
+Bearer auth where **unconfigured is closed, not open** (503 + a loud startup log). Job state moved
+from a process dict into the database, because the dict could not answer `GET /audits/{id}` after a
+restart. Batch-hash dedup so a client's impatient retry does not pay for a second audit.
+
+The cockpit became a client of the same API a bank would call — removing two execution paths, gaining
+the single worker's serialisation, and making it impossible for a Streamlit rerun to bill money.
+
+*Two defects:* an `asyncio.Queue` at module scope bound itself to the first event loop it saw, so
+every job after the first app shutdown sat at `running` for ever (suite 338s → 6s once fixed). And
+`finding_id` was not unique across reports — `candidate_id` is deliberately stable across runs, so
+`f-{candidate_id}` collided on the second audit of a month, which is what `?force=true` does.
+
+*Deleted:* `src/ui/ingestion_panel.py`, which read the pre-migration `regulations` collection and
+reported **12,273 ADGM chunks** as the active corpus while the engine cited 731 US ones.
+
+## Phase 7 · `0d5be5d` — Langfuse, with redaction on the way out
+
+Closes a measured defect: the pre-migration system uploaded **137,261 characters per run** to a hosted
+project, including every wire's counterparty names and account numbers, of which ~21 ever reached a
+model. `mask = lambda data: trim(redact(data))`, set on the client so it covers every span the SDK
+emits. **~137 KB → 9.2 KB, zero account numbers, zero names**, captured from the OpenTelemetry
+exporter rather than estimated.
+
+*Two redaction fixes the probe forced:* an exported `Decimal` came out as the literal `"<Decimal>"`,
+useless in a trace about sub-threshold structuring; and `"2023-06-14"` read as an 8-digit run with
+hyphen separators and was masked — so a finding's explanation said "three transfers on [REDACTED]".
+
+Six services for Langfuse rather than the plan's two: v3 split storage three ways and the SDK speaks
+an endpoint only v3+ serves. Pinning an older server the client cannot talk to would have been the
+smaller diff and the wrong answer.
+
+## Phase 8 · `7dfff09` `7ba1ccc` `990998a` — golden datasets, runners, the first honest numbers
+
+Six corpora, 75 labelled patterns at 15 per typology, in a corpus **deliberately not** the one the
+detectors were tuned on. *Caught in the act:* the first eval build ran `--append` into the dev corpus,
+which would have silently turned the recorded 99% recall into a number measured on different data.
+
+The rules-only baseline is what makes recall mean anything: it scores **0.907 by alerting on 77.6% of
+the batch**, against our 0.827 on 19.1%.
+
+**Three metrics fail and are left failing** with named causes — see [TEST_RESULTS.md](TEST_RESULTS.md).
+Structuring recall is 5/15 because the planted amounts (median $2,323) never reach the $8,000 band; it
+is a mismatch of premises, since §5324 structuring means amounts *chosen* to evade a threshold.
+
+*Defects the harness found:* **context precision was 0.22** because the indicator search used
+obligation-shaped queries — Phase 1's measurement had not transferred, because obligations are now
+fetched by id and the only corpus still searched is written as descriptions of behaviour (0.22 → 0.60).
+**Faithfulness was 0.9811** — two findings whose narrative named a clause their own citation list
+omitted; nothing fabricated, but a report that cites what it does not list is inconsistent (now 1.00
+over 110 checks). And **a non-UTF-8 batch lost all 500 messages** to a `UnicodeDecodeError`.
+
+*And three defects in my own datasets*, corrected: four of ten query records specified attributes no
+detector emits; one labelled answer was simply wrong, the retriever's first result being definitionally
+better; and the set was ten records where only six queries are distinguishable.
+
+*Correction · `ebfac70`:* Phase 8c overwrote Phase 0's `pr.yml` without reading it, losing the offline
+environment guarantee, an explicit credential-leak check, a pinned interpreter and the skip report.
+Restored verbatim and extended.
+
+## Phase 9 — docs as built
+
+This section, plus [DESIGN.md](DESIGN.md), [HLD.md](HLD.md), [LLD.md](LLD.md),
+[CONSTANTS.md](CONSTANTS.md), [TEST_DESIGN.md](TEST_DESIGN.md) and
+[TEST_RESULTS.md](TEST_RESULTS.md); the four documented deviations from the design set; and every
+number in `config.yaml` beside the measurement that chose it.
+
+---
+
+# v1 — the original build
 
 ## Phase 4 — Cockpit, service, packaging, cache
 
